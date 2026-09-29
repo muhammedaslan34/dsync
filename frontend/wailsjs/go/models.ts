@@ -1,3 +1,24 @@
+export namespace discovery {
+	
+	export class LocalAddr {
+	    ip: string;
+	    kind: string;
+	    interface: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalAddr(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ip = source["ip"];
+	        this.kind = source["kind"];
+	        this.interface = source["interface"];
+	    }
+	}
+
+}
+
 export namespace node {
 	
 	export class FileInfo {

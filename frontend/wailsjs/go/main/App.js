@@ -14,12 +14,20 @@ export function ChooseReceiveDir() {
   return window['go']['main']['App']['ChooseReceiveDir']();
 }
 
+export function FindOnNetwork() {
+  return window['go']['main']['App']['FindOnNetwork']();
+}
+
 export function ForgetPeer(arg1) {
   return window['go']['main']['App']['ForgetPeer'](arg1);
 }
 
 export function History() {
   return window['go']['main']['App']['History']();
+}
+
+export function LocalAddrs() {
+  return window['go']['main']['App']['LocalAddrs']();
 }
 
 export function OpenPath(arg1) {

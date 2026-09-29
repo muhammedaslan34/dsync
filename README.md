@@ -48,8 +48,12 @@ Open **dsync-gui** on both computers. They find each other automatically and sho
 in the sidebar; pick one and type, or drag files onto the window (or use 📎) to send them. Received
 files go to `~/Downloads/dsync` by default; change it at the bottom of the sidebar.
 Enter sends, Shift+Enter adds a new line, and every
-message has a Copy button. Click your device name to rename it, and use **+** to add a
-device by IP when it's on another network (e.g. Tailscale).
+message has a Copy button. Click your device name to rename it.
+
+If a device doesn't appear by itself, click **+**: dsync searches every address on your
+network for it (this works even when the firewall blocks discovery broadcasts, as long as
+TCP 47101 is open), or you can type its address. Your own addresses are shown under
+your device name; click one to copy it.
 
 Only one dsync (app or `dsync serve`) can run per computer, since both use the same ports.
 

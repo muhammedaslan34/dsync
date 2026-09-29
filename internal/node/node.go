@@ -57,11 +57,11 @@ type Peer struct {
 
 // Message is a text sent to or received from a peer.
 type Message struct {
-	ID       int64  `json:"id"`
-	Time     int64  `json:"time"` // unix ms
-	PeerID   string `json:"peerId"`
-	PeerName string `json:"peerName"`
-	Incoming bool   `json:"incoming"`
+	ID       int64     `json:"id"`
+	Time     int64     `json:"time"` // unix ms
+	PeerID   string    `json:"peerId"`
+	PeerName string    `json:"peerName"`
+	Incoming bool      `json:"incoming"`
 	Text     string    `json:"text,omitempty"`
 	File     *FileInfo `json:"file,omitempty"`
 }
@@ -378,4 +378,22 @@ func (n *Node) saveHistoryLocked() {
 	}
 	data, _ := json.Marshal(n.history)
 	os.WriteFile(path, data, 0o600)
+}
+
+// LocalAddrs lists this device's addresses, to show the user what to type
+// on the other machine.
+func (n *Node) LocalAddrs() []discovery.LocalAddr {
+	return discovery.LocalAddrs()
+}
+
+// FindOnNetwork checks every address on the local network for dsync. It
+// only reports what it finds; the caller decides which ones to add.
+func (n *Node) FindOnNetwork(ctx context.Context) []Peer {
+	self := n.Self()
+	found := discovery.Sweep(ctx, self.ID, self.Port)
+	out := make([]Peer, len(found))
+	for i, p := range found {
+		out[i] = Peer{ID: p.ID, Name: p.Name, OS: p.OS, Addr: p.Addr(), Online: true}
+	}
+	return out
 }

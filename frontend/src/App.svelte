@@ -3,6 +3,7 @@
   import {
     Self, SetName, Peers, History, Status, Scan, AddPeer, ForgetPeer, SendText,
     PickFiles, SendPaths, CancelTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
+    LocalAddrs, FindOnNetwork,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
 
@@ -18,6 +19,9 @@
   let scanning = $state(false)
   let progress = $state({}) // message id -> { done, rate }
   let receiveDir = $state('')
+  let localAddrs = $state([])
+  let searching = $state(false)
+  let searchResults = $state(null) // null until a search has run
 
   let editingName = $state(false)
   let nameDraft = $state('')
@@ -45,9 +49,10 @@
   let thread = $derived(messages.filter((m) => m.peerId === selectedId))
 
   onMount(async () => {
-    ;[self, peers, messages, serviceError, receiveDir] = await Promise.all([
-      Self(), Peers(), History(), Status(), ReceiveDir(),
+    ;[self, peers, messages, serviceError, receiveDir, localAddrs] = await Promise.all([
+      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(),
     ])
+    localAddrs ??= []
     peers ??= []
     messages ??= []
 
@@ -180,6 +185,37 @@
     }
   }
 
+  function openAdd() {
+    showAdd = true
+    addError = ''
+    addAddr = ''
+    LocalAddrs().then((a) => (localAddrs = a ?? []))
+    search()
+  }
+
+  async function search() {
+    searching = true
+    try {
+      searchResults = (await FindOnNetwork()) ?? []
+    } finally {
+      searching = false
+    }
+  }
+
+  async function connect(addr) {
+    adding = true
+    addError = ''
+    try {
+      const p = await AddPeer(addr)
+      showAdd = false
+      select(p.id)
+    } catch (err) {
+      addError = String(err)
+    } finally {
+      adding = false
+    }
+  }
+
   async function addDevice(e) {
     e.preventDefault()
     adding = true
@@ -236,13 +272,18 @@
         </button>
       {/if}
       <div class="muted small">{osLabel[self.os] ?? self.os} · port {self.port}</div>
+      {#each localAddrs as a (a.ip)}
+        <button class="addr" title="Copy address" onclick={() => copy(a.ip)}>
+          <span>{a.ip}</span><span class="muted small">{a.kind}</span>
+        </button>
+      {/each}
     </section>
 
     <div class="list-head">
       <span class="label">Devices</span>
       <div class="head-actions">
         <button class="icon" title="Scan again" onclick={refresh} class:spin={scanning}>↻</button>
-        <button class="icon" title="Add by address" onclick={() => { showAdd = true; addError = '' }}>+</button>
+        <button class="icon" title="Find or add a device" onclick={openAdd}>+</button>
       </div>
     </div>
 
@@ -373,13 +414,49 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) showAdd = false }}>
     <form class="dialog" onsubmit={addDevice}>
-      <h2>Add device by address</h2>
-      <p class="muted small">Use this when the device is on another network, e.g. its Tailscale IP.</p>
-      <!-- svelte-ignore a11y_autofocus -->
-      <input bind:value={addAddr} placeholder="192.168.1.20 or 100.64.0.2:47101" autofocus />
+      <div class="dialog-title">
+        <h2>Connect a device</h2>
+        <button type="button" class="link small" onclick={search} disabled={searching}>
+          {searching ? 'Searching…' : 'Search again'}
+        </button>
+      </div>
+      <p class="muted small">Make sure dsync is open on the other computer.</p>
+
+      <div class="results">
+        {#if searching && !searchResults?.length}
+          <div class="muted small result-note"><span class="spinner"></span> Searching your network…</div>
+        {:else if searchResults?.length}
+          {#each searchResults as r (r.id)}
+            {@const known = peers.some((p) => p.id === r.id)}
+            <div class="result">
+              <span class="dot online"></span>
+              <span class="device-text">
+                <span class="device-name">{r.name}</span>
+                <span class="muted small">{osLabel[r.os] ?? r.os} · {r.addr}</span>
+              </span>
+              <button type="button" class="primary small-btn" disabled={adding} onclick={() => connect(r.addr)}>
+                {known ? 'Open' : 'Connect'}
+              </button>
+            </div>
+          {/each}
+        {:else if searchResults}
+          <div class="muted small result-note">
+            Nothing found on your network. Check that dsync is running there and TCP port 47101 is
+            allowed in its firewall, or enter its address below.
+          </div>
+        {/if}
+      </div>
+
+      <label class="label" for="addr-input">Or enter its address</label>
+      <input id="addr-input" bind:value={addAddr} placeholder="192.168.1.20 or a Tailscale IP like 100.64.0.2" />
+      {#if localAddrs.length}
+        <p class="muted small hint">
+          This computer's address: {#each localAddrs as a, i (a.ip)}{i ? ', ' : ''}<button type="button" class="link" title="Copy" onclick={() => copy(a.ip)}>{a.ip}</button> ({a.kind}){/each}
+        </p>
+      {/if}
       {#if addError}<p class="error small">{addError}</p>{/if}
       <div class="dialog-actions">
-        <button type="button" class="ghost" onclick={() => (showAdd = false)}>Cancel</button>
+        <button type="button" class="ghost" onclick={() => (showAdd = false)}>Close</button>
         <button type="submit" class="primary" disabled={adding || !addAddr.trim()}>
           {adding ? 'Connecting…' : 'Add'}
         </button>

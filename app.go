@@ -8,6 +8,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"dsync/internal/config"
+	"dsync/internal/discovery"
 	"dsync/internal/node"
 	"dsync/internal/proto"
 )
@@ -117,3 +118,11 @@ func (a *App) OpenPath(path string) error { return openPath(path) }
 
 // RevealPath shows a file in the system file manager.
 func (a *App) RevealPath(path string) error { return revealPath(path) }
+
+func (a *App) LocalAddrs() []discovery.LocalAddr { return a.node.LocalAddrs() }
+
+func (a *App) FindOnNetwork() []node.Peer {
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+	return a.node.FindOnNetwork(ctx)
+}
