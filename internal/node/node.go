@@ -1,0 +1,336 @@
+// Package node is the long-running core of dsync: it receives messages,
+// answers discovery, keeps the list of nearby devices and the message
+// history, and reports changes through an event callback. The GUI and
+// `dsync serve` are thin wrappers around it.
+package node
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"dsync/internal/client"
+	"dsync/internal/config"
+	"dsync/internal/discovery"
+	"dsync/internal/proto"
+	"dsync/internal/server"
+)
+
+// Events passed to the emit callback.
+const (
+	EventPeers   = "peers"   // data: []Peer
+	EventMessage = "message" // data: Message
+)
+
+const (
+	scanInterval = 5 * time.Second
+	discoverWait = 1500 * time.Millisecond
+	offlineAfter = 3*scanInterval + time.Second
+	maxHistory   = 1000
+)
+
+// Peer is another device, as shown in the device list.
+type Peer struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	OS       string `json:"os"`
+	Addr     string `json:"addr"`
+	Manual   bool   `json:"manual"`
+	Online   bool   `json:"online"`
+	LastSeen int64  `json:"lastSeen"` // unix ms
+}
+
+// Message is a text sent to or received from a peer.
+type Message struct {
+	ID       int64  `json:"id"`
+	Time     int64  `json:"time"` // unix ms
+	PeerID   string `json:"peerId"`
+	PeerName string `json:"peerName"`
+	Incoming bool   `json:"incoming"`
+	Text     string `json:"text"`
+}
+
+type Node struct {
+	cfg  *config.Config
+	emit func(event string, data any)
+
+	mu      sync.Mutex
+	peers   map[string]*Peer
+	history []Message
+}
+
+func New(cfg *config.Config, emit func(event string, data any)) *Node {
+	if emit == nil {
+		emit = func(string, any) {}
+	}
+	n := &Node{cfg: cfg, emit: emit, peers: map[string]*Peer{}}
+	n.loadHistory()
+	return n
+}
+
+func (n *Node) Self() proto.Device {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return proto.Device{ID: n.cfg.ID, Name: n.cfg.Name, OS: runtime.GOOS, Port: n.cfg.Port}
+}
+
+func (n *Node) SetName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("name cannot be empty")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cfg.Name = name
+	return n.cfg.Save()
+}
+
+// Run serves until ctx is cancelled or a listener fails.
+func (n *Node) Run(ctx context.Context) error {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", n.cfg.Port))
+	if err != nil {
+		return fmt.Errorf("listen tcp :%d: %w (is dsync already running?)", n.cfg.Port, err)
+	}
+	srv := &server.Server{Self: n.Self, OnText: n.receiveText}
+	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errc := make(chan error, 2)
+	go func() { errc <- discovery.Respond(ctx, n.Self) }()
+	go func() {
+		if err := httpSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			errc <- err
+		}
+	}()
+	go n.scanLoop(ctx)
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case runErr = <-errc:
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelShutdown()
+	httpSrv.Shutdown(shutdownCtx)
+	return runErr
+}
+
+func (n *Node) scanLoop(ctx context.Context) {
+	t := time.NewTicker(scanInterval)
+	defer t.Stop()
+	for {
+		n.Scan(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// Scan looks for devices on the network and checks manually added ones.
+func (n *Node) Scan(ctx context.Context) {
+	self := n.Self()
+	found, _ := discovery.Discover(ctx, self, discoverWait)
+
+	seen := map[string]Peer{}
+	for _, p := range found {
+		seen[p.ID] = Peer{ID: p.ID, Name: p.Name, OS: p.OS, Addr: p.Addr()}
+	}
+	n.mu.Lock()
+	manual := slices.Clone(n.cfg.ManualPeers)
+	n.mu.Unlock()
+	for _, addr := range manual {
+		infoCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		d, err := client.Info(infoCtx, addr)
+		cancel()
+		if err == nil && d.ID != self.ID {
+			seen[d.ID] = Peer{ID: d.ID, Name: d.Name, OS: d.OS, Addr: addr, Manual: true}
+		}
+	}
+
+	now := time.Now().UnixMilli()
+	n.mu.Lock()
+	for id, p := range seen {
+		p.LastSeen = now
+		n.peers[id] = &p
+	}
+	for _, p := range n.peers {
+		p.Online = now-p.LastSeen < offlineAfter.Milliseconds()
+	}
+	n.mu.Unlock()
+	n.emit(EventPeers, n.Peers())
+}
+
+func (n *Node) Peers() []Peer {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]Peer, 0, len(n.peers))
+	for _, p := range n.peers {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	return out
+}
+
+// AddPeer remembers a device by address, for networks where discovery
+// doesn't work.
+func (n *Node) AddPeer(ctx context.Context, addr string) (Peer, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return Peer{}, errors.New("address is empty")
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, strconv.Itoa(proto.DefaultHTTPPort))
+	}
+	d, err := client.Info(ctx, addr)
+	if err != nil {
+		return Peer{}, fmt.Errorf("could not reach %s: %w", addr, err)
+	}
+	if d.ID == n.Self().ID {
+		return Peer{}, errors.New("that address is this device")
+	}
+
+	p := Peer{ID: d.ID, Name: d.Name, OS: d.OS, Addr: addr, Manual: true, Online: true, LastSeen: time.Now().UnixMilli()}
+	n.mu.Lock()
+	n.peers[p.ID] = &p
+	var saveErr error
+	if !slices.Contains(n.cfg.ManualPeers, addr) {
+		n.cfg.ManualPeers = append(n.cfg.ManualPeers, addr)
+		saveErr = n.cfg.Save()
+	}
+	n.mu.Unlock()
+	n.emit(EventPeers, n.Peers())
+	return p, saveErr
+}
+
+// ForgetPeer removes a device from the list. Devices found by discovery
+// come back on the next scan while they are online.
+func (n *Node) ForgetPeer(id string) error {
+	n.mu.Lock()
+	p, ok := n.peers[id]
+	var err error
+	if ok {
+		delete(n.peers, id)
+		if p.Manual {
+			n.cfg.ManualPeers = slices.DeleteFunc(n.cfg.ManualPeers, func(a string) bool { return a == p.Addr })
+			err = n.cfg.Save()
+		}
+	}
+	n.mu.Unlock()
+	n.emit(EventPeers, n.Peers())
+	return err
+}
+
+func (n *Node) SendText(ctx context.Context, peerID, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return errors.New("message is empty")
+	}
+	if len(text) > proto.MaxTextBytes {
+		return fmt.Errorf("message is larger than %d bytes; send it as a file instead", proto.MaxTextBytes)
+	}
+	n.mu.Lock()
+	p, ok := n.peers[peerID]
+	var addr, name string
+	if ok {
+		addr, name = p.Addr, p.Name
+	}
+	n.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("unknown device %s", peerID)
+	}
+
+	self := n.Self()
+	msg := proto.TextMessage{FromID: self.ID, FromName: self.Name, FromPort: self.Port, Text: text}
+	if err := client.SendText(ctx, addr, msg); err != nil {
+		return fmt.Errorf("send to %s: %w", name, err)
+	}
+	n.addMessage(Message{PeerID: peerID, PeerName: name, Text: text})
+	return nil
+}
+
+func (n *Node) receiveText(m proto.TextMessage, remoteAddr string) {
+	// Learn about the sender even if discovery can't see it (e.g. over a VPN).
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil && m.FromPort > 0 {
+		n.mu.Lock()
+		p, known := n.peers[m.FromID]
+		if !known {
+			n.peers[m.FromID] = &Peer{
+				ID: m.FromID, Name: m.FromName, Addr: net.JoinHostPort(host, strconv.Itoa(m.FromPort)),
+				Online: true, LastSeen: time.Now().UnixMilli(),
+			}
+		} else {
+			p.Name = m.FromName
+		}
+		n.mu.Unlock()
+		if !known {
+			n.emit(EventPeers, n.Peers())
+		}
+	}
+	n.addMessage(Message{PeerID: m.FromID, PeerName: m.FromName, Incoming: true, Text: m.Text})
+}
+
+func (n *Node) History() []Message {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone(n.history)
+}
+
+func (n *Node) addMessage(m Message) {
+	n.mu.Lock()
+	m.Time = time.Now().UnixMilli()
+	if len(n.history) > 0 {
+		m.ID = n.history[len(n.history)-1].ID + 1
+	} else {
+		m.ID = 1
+	}
+	n.history = append(n.history, m)
+	if len(n.history) > maxHistory {
+		n.history = slices.Clone(n.history[len(n.history)-maxHistory:])
+	}
+	n.saveHistoryLocked()
+	n.mu.Unlock()
+	n.emit(EventMessage, m)
+}
+
+func historyPath() (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "history.json"), nil
+}
+
+func (n *Node) loadHistory() {
+	path, err := historyPath()
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	json.Unmarshal(data, &n.history)
+}
+
+func (n *Node) saveHistoryLocked() {
+	path, err := historyPath()
+	if err != nil {
+		return
+	}
+	data, _ := json.Marshal(n.history)
+	os.WriteFile(path, data, 0o600)
+}

@@ -1,0 +1,6 @@
+/dist/
+/build/bin/
+node_modules/
+/frontend/dist/*
+!/frontend/dist/.gitkeep
+frontend/package.json.md5
