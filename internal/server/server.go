@@ -11,12 +11,17 @@ import (
 type Server struct {
 	Self   func() proto.Device
 	OnText func(m proto.TextMessage, remoteAddr string)
+	// Files handles POST /api/v1/file (see proto.HeaderFileName).
+	Files http.HandlerFunc
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/info", s.info)
 	mux.HandleFunc("POST /api/v1/text", s.text)
+	if s.Files != nil {
+		mux.HandleFunc("POST /api/v1/file", s.Files)
+	}
 	return mux
 }
 

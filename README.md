@@ -45,7 +45,9 @@ Your Wi-Fi must be set to a *Private* network on Windows.
 ## Usage
 
 Open **dsync-gui** on both computers. They find each other automatically and show up
-in the sidebar; pick one and type. Enter sends, Shift+Enter adds a new line, and every
+in the sidebar; pick one and type, or drag files onto the window (or use 📎) to send them. Received
+files go to `~/Downloads/dsync` by default; change it at the bottom of the sidebar.
+Enter sends, Shift+Enter adds a new line, and every
 message has a Copy button. Click your device name to rename it, and use **+** to add a
 device by IP when it's on another network (e.g. Tailscale).
 
@@ -58,6 +60,7 @@ dsync devices                     # list machines found on the network
 dsync text "hello"                # send text (auto-picks the device if there is only one)
 dsync text --to MyPC "hello"      # pick a device by name
 cat notes.txt | dsync text        # send text from stdin
+dsync send --to MyPC a.zip b.iso  # send files with a progress bar
 dsync text --addr 100.64.0.2 "hi" # skip discovery
 ```
 
@@ -70,7 +73,7 @@ Settings and message history live in `~/.config/dsync/` (Linux) or `%AppData%\ds
 ## Roadmap
 
 1. ✅ Discovery + text, desktop app
-2. File transfer (streaming, progress, checksum)
+2. ✅ File transfer (streaming, progress, checksum, cancel)
 3. Pairing + TLS
 4. Resume, clipboard sync, folders
 5. `dsync control` (launch Moonlight), tray GUI, Tailscale

@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -132,4 +133,79 @@ func resolveTarget(cfg *config.Config, to, addr string) (target, name string, er
 		}
 		return "", "", fmt.Errorf("several devices found, pick one with --to: %s", strings.Join(names, ", "))
 	}
+}
+
+func cmdSend(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("send", flag.ExitOnError)
+	to := fs.String("to", "", "device name or id prefix")
+	addr := fs.String("addr", "", "send directly to HOST[:PORT], skipping discovery")
+	fs.Parse(args)
+	if fs.NArg() == 0 {
+		return errors.New("no files given")
+	}
+	for _, p := range fs.Args() {
+		if st, err := os.Stat(p); err != nil {
+			return err
+		} else if st.IsDir() {
+			return fmt.Errorf("%s is a folder; sending folders isn't supported yet", p)
+		}
+	}
+
+	target, name, err := resolveTarget(cfg, *to, *addr)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	for _, p := range fs.Args() {
+		if err := sendOne(ctx, cfg, target, p); err != nil {
+			return fmt.Errorf("send %s to %s: %w", filepath.Base(p), name, err)
+		}
+	}
+	return nil
+}
+
+func sendOne(ctx context.Context, cfg *config.Config, target, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	base := filepath.Base(path)
+	start := time.Now()
+	var last time.Time
+	progress := func(done int64) {
+		if time.Since(last) < 200*time.Millisecond && done != st.Size() {
+			return
+		}
+		last = time.Now()
+		pct := 100.0
+		if st.Size() > 0 {
+			pct = float64(done) * 100 / float64(st.Size())
+		}
+		rate := float64(done) / max(time.Since(start).Seconds(), 0.001)
+		fmt.Fprintf(os.Stderr, "\r%s  %5.1f%%  %s / %s  %s/s   ", base, pct, humanBytes(done), humanBytes(st.Size()), humanBytes(int64(rate)))
+	}
+	h := client.FileHeader{FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, Name: base, Size: st.Size()}
+	err = client.SendFile(ctx, target, h, f, progress)
+	fmt.Fprintln(os.Stderr)
+	return err
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

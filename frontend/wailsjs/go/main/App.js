@@ -6,6 +6,14 @@ export function AddPeer(arg1) {
   return window['go']['main']['App']['AddPeer'](arg1);
 }
 
+export function CancelTransfer(arg1) {
+  return window['go']['main']['App']['CancelTransfer'](arg1);
+}
+
+export function ChooseReceiveDir() {
+  return window['go']['main']['App']['ChooseReceiveDir']();
+}
+
 export function ForgetPeer(arg1) {
   return window['go']['main']['App']['ForgetPeer'](arg1);
 }
@@ -14,8 +22,24 @@ export function History() {
   return window['go']['main']['App']['History']();
 }
 
+export function OpenPath(arg1) {
+  return window['go']['main']['App']['OpenPath'](arg1);
+}
+
 export function Peers() {
   return window['go']['main']['App']['Peers']();
+}
+
+export function PickFiles(arg1) {
+  return window['go']['main']['App']['PickFiles'](arg1);
+}
+
+export function ReceiveDir() {
+  return window['go']['main']['App']['ReceiveDir']();
+}
+
+export function RevealPath(arg1) {
+  return window['go']['main']['App']['RevealPath'](arg1);
 }
 
 export function Scan() {
@@ -24,6 +48,10 @@ export function Scan() {
 
 export function Self() {
   return window['go']['main']['App']['Self']();
+}
+
+export function SendPaths(arg1, arg2) {
+  return window['go']['main']['App']['SendPaths'](arg1, arg2);
 }
 
 export function SendText(arg1, arg2) {

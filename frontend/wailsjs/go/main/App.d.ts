@@ -5,15 +5,29 @@ import {proto} from '../models';
 
 export function AddPeer(arg1:string):Promise<node.Peer>;
 
+export function CancelTransfer(arg1:number):Promise<void>;
+
+export function ChooseReceiveDir():Promise<string>;
+
 export function ForgetPeer(arg1:string):Promise<void>;
 
 export function History():Promise<Array<node.Message>>;
 
+export function OpenPath(arg1:string):Promise<void>;
+
 export function Peers():Promise<Array<node.Peer>>;
+
+export function PickFiles(arg1:string):Promise<void>;
+
+export function ReceiveDir():Promise<string>;
+
+export function RevealPath(arg1:string):Promise<void>;
 
 export function Scan():Promise<void>;
 
 export function Self():Promise<proto.Device>;
+
+export function SendPaths(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function SendText(arg1:string,arg2:string):Promise<void>;
 

@@ -32,6 +32,9 @@ import (
 const (
 	EventPeers   = "peers"   // data: []Peer
 	EventMessage = "message" // data: Message
+	// EventMessageUpdate reports a changed message, e.g. a finished transfer.
+	EventMessageUpdate = "message:update" // data: Message
+	EventProgress      = "progress"       // data: Progress
 )
 
 const (
@@ -59,23 +62,25 @@ type Message struct {
 	PeerID   string `json:"peerId"`
 	PeerName string `json:"peerName"`
 	Incoming bool   `json:"incoming"`
-	Text     string `json:"text"`
+	Text     string    `json:"text,omitempty"`
+	File     *FileInfo `json:"file,omitempty"`
 }
 
 type Node struct {
 	cfg  *config.Config
 	emit func(event string, data any)
 
-	mu      sync.Mutex
-	peers   map[string]*Peer
-	history []Message
+	mu        sync.Mutex
+	peers     map[string]*Peer
+	history   []Message
+	transfers map[int64]context.CancelFunc
 }
 
 func New(cfg *config.Config, emit func(event string, data any)) *Node {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
-	n := &Node{cfg: cfg, emit: emit, peers: map[string]*Peer{}}
+	n := &Node{cfg: cfg, emit: emit, peers: map[string]*Peer{}, transfers: map[int64]context.CancelFunc{}}
 	n.loadHistory()
 	return n
 }
@@ -103,7 +108,7 @@ func (n *Node) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen tcp :%d: %w (is dsync already running?)", n.cfg.Port, err)
 	}
-	srv := &server.Server{Self: n.Self, OnText: n.receiveText}
+	srv := &server.Server{Self: n.Self, OnText: n.receiveText, Files: n.receiveFile}
 	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -263,24 +268,31 @@ func (n *Node) SendText(ctx context.Context, peerID, text string) error {
 }
 
 func (n *Node) receiveText(m proto.TextMessage, remoteAddr string) {
-	// Learn about the sender even if discovery can't see it (e.g. over a VPN).
-	if host, _, err := net.SplitHostPort(remoteAddr); err == nil && m.FromPort > 0 {
-		n.mu.Lock()
-		p, known := n.peers[m.FromID]
-		if !known {
-			n.peers[m.FromID] = &Peer{
-				ID: m.FromID, Name: m.FromName, Addr: net.JoinHostPort(host, strconv.Itoa(m.FromPort)),
-				Online: true, LastSeen: time.Now().UnixMilli(),
-			}
-		} else {
-			p.Name = m.FromName
-		}
-		n.mu.Unlock()
-		if !known {
-			n.emit(EventPeers, n.Peers())
-		}
-	}
+	n.learnPeer(m.FromID, m.FromName, m.FromPort, remoteAddr)
 	n.addMessage(Message{PeerID: m.FromID, PeerName: m.FromName, Incoming: true, Text: m.Text})
+}
+
+// learnPeer records a device that contacted us, even if discovery can't see
+// it (e.g. over a VPN).
+func (n *Node) learnPeer(id, name string, port int, remoteAddr string) {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil || id == "" || port <= 0 {
+		return
+	}
+	n.mu.Lock()
+	p, known := n.peers[id]
+	if !known {
+		n.peers[id] = &Peer{
+			ID: id, Name: name, Addr: net.JoinHostPort(host, strconv.Itoa(port)),
+			Online: true, LastSeen: time.Now().UnixMilli(),
+		}
+	} else {
+		p.Name = name
+	}
+	n.mu.Unlock()
+	if !known {
+		n.emit(EventPeers, n.Peers())
+	}
 }
 
 func (n *Node) History() []Message {
@@ -289,7 +301,7 @@ func (n *Node) History() []Message {
 	return slices.Clone(n.history)
 }
 
-func (n *Node) addMessage(m Message) {
+func (n *Node) addMessage(m Message) Message {
 	n.mu.Lock()
 	m.Time = time.Now().UnixMilli()
 	if len(n.history) > 0 {
@@ -304,6 +316,31 @@ func (n *Node) addMessage(m Message) {
 	n.saveHistoryLocked()
 	n.mu.Unlock()
 	n.emit(EventMessage, m)
+	return m
+}
+
+// updateFile changes the file info of a message and reports it.
+func (n *Node) updateFile(id int64, change func(f *FileInfo)) {
+	n.mu.Lock()
+	var updated *Message
+	for i := len(n.history) - 1; i >= 0; i-- {
+		if n.history[i].ID == id && n.history[i].File != nil {
+			f := *n.history[i].File
+			change(&f)
+			n.history[i].File = &f
+			updated = &n.history[i]
+			break
+		}
+	}
+	var m Message
+	if updated != nil {
+		m = *updated
+		n.saveHistoryLocked()
+	}
+	n.mu.Unlock()
+	if updated != nil {
+		n.emit(EventMessageUpdate, m)
+	}
 }
 
 func historyPath() (string, error) {
@@ -324,6 +361,14 @@ func (n *Node) loadHistory() {
 		return
 	}
 	json.Unmarshal(data, &n.history)
+	// Transfers that were running when the app closed didn't finish.
+	for i, m := range n.history {
+		if m.File != nil && m.File.Status == StatusActive {
+			f := *m.File
+			f.Status, f.Error = StatusFailed, "interrupted"
+			n.history[i].File = &f
+		}
+	}
 }
 
 func (n *Node) saveHistoryLocked() {

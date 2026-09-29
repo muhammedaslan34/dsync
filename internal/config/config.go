@@ -21,6 +21,20 @@ type Config struct {
 	// ManualPeers are HOST:PORT addresses added by hand, for devices that
 	// broadcast discovery can't reach (e.g. over Tailscale).
 	ManualPeers []string `json:"manual_peers,omitempty"`
+	// DownloadDir is where received files go; empty means ~/Downloads/dsync.
+	DownloadDir string `json:"download_dir,omitempty"`
+}
+
+// ReceiveDir returns the folder for received files.
+func (c *Config) ReceiveDir() string {
+	if c.DownloadDir != "" {
+		return c.DownloadDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, "Downloads", "dsync")
 }
 
 // Dir returns the config directory. DSYNC_CONFIG_DIR overrides it, which is

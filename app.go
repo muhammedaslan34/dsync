@@ -81,3 +81,39 @@ func (a *App) SendText(peerID, text string) error {
 	defer cancel()
 	return a.node.SendText(ctx, peerID, text)
 }
+
+// PickFiles opens a file dialog and sends the chosen files to a peer.
+func (a *App) PickFiles(peerID string) error {
+	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Send files"})
+	if err != nil || len(paths) == 0 {
+		return err
+	}
+	return a.node.SendFiles(a.ctx, peerID, paths)
+}
+
+// SendPaths sends files dropped onto the window.
+func (a *App) SendPaths(peerID string, paths []string) error {
+	return a.node.SendFiles(a.ctx, peerID, paths)
+}
+
+func (a *App) CancelTransfer(id int64) { a.node.CancelTransfer(id) }
+
+func (a *App) ReceiveDir() string { return a.node.ReceiveDir() }
+
+// ChooseReceiveDir lets the user pick where received files are saved.
+func (a *App) ChooseReceiveDir() (string, error) {
+	dir, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{
+		Title:            "Save received files in",
+		DefaultDirectory: a.node.ReceiveDir(),
+	})
+	if err != nil || dir == "" {
+		return a.node.ReceiveDir(), err
+	}
+	return dir, a.node.SetReceiveDir(dir)
+}
+
+// OpenPath opens a file or folder with the system's default app.
+func (a *App) OpenPath(path string) error { return openPath(path) }
+
+// RevealPath shows a file in the system file manager.
+func (a *App) RevealPath(path string) error { return revealPath(path) }

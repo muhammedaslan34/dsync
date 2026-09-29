@@ -2,8 +2,9 @@
   import { onMount, tick } from 'svelte'
   import {
     Self, SetName, Peers, History, Status, Scan, AddPeer, ForgetPeer, SendText,
+    PickFiles, SendPaths, CancelTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
   } from '../wailsjs/go/main/App'
-  import { EventsOn, ClipboardSetText } from '../wailsjs/runtime/runtime'
+  import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
 
   let self = $state({ id: '', name: '', os: '', port: 0 })
   let peers = $state([])
@@ -15,6 +16,8 @@
   let draft = $state('')
   let sending = $state(false)
   let scanning = $state(false)
+  let progress = $state({}) // message id -> { done, rate }
+  let receiveDir = $state('')
 
   let editingName = $state(false)
   let nameDraft = $state('')
@@ -42,7 +45,9 @@
   let thread = $derived(messages.filter((m) => m.peerId === selectedId))
 
   onMount(async () => {
-    ;[self, peers, messages, serviceError] = await Promise.all([Self(), Peers(), History(), Status()])
+    ;[self, peers, messages, serviceError, receiveDir] = await Promise.all([
+      Self(), Peers(), History(), Status(), ReceiveDir(),
+    ])
     peers ??= []
     messages ??= []
 
@@ -52,7 +57,17 @@
       if (m.incoming && m.peerId !== selectedId) unread[m.peerId] = (unread[m.peerId] ?? 0) + 1
       if (m.peerId === selectedId) scrollToBottom()
     })
+    EventsOn('message:update', (m) => {
+      messages = messages.map((x) => (x.id === m.id ? m : x))
+      if (m.file?.status !== 'active') delete progress[m.id]
+    })
+    EventsOn('progress', (p) => { progress[p.id] = p })
     EventsOn('error', (e) => { serviceError = e })
+
+    // Only elements with --wails-drop-target: drop accept files.
+    OnFileDrop((_x, _y, paths) => {
+      if (selectedId && paths?.length) sendPaths(paths)
+    }, true)
 
     if (!selectedId && devices.length) select(devices[0].id)
   })
@@ -96,6 +111,57 @@
       send()
     }
   }
+
+  async function attach() {
+    try {
+      await PickFiles(selected.id)
+    } catch (e) {
+      showToast(String(e), 'error')
+    }
+  }
+
+  async function sendPaths(paths) {
+    try {
+      await SendPaths(selectedId, paths)
+    } catch (e) {
+      showToast(String(e), 'error')
+    }
+  }
+
+  async function changeReceiveDir() {
+    try {
+      receiveDir = await ChooseReceiveDir()
+    } catch (e) {
+      showToast(String(e), 'error')
+    }
+  }
+
+  async function run(fn, path) {
+    try {
+      await fn(path)
+    } catch (e) {
+      showToast(String(e), 'error')
+    }
+  }
+
+  function fmtSize(n) {
+    if (n < 1024) return `${n} B`
+    const units = ['KB', 'MB', 'GB', 'TB']
+    let i = -1
+    do { n /= 1024; i++ } while (n >= 1024 && i < units.length - 1)
+    return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`
+  }
+
+  function pct(done, size) {
+    return size ? Math.min(100, (done / size) * 100) : 0
+  }
+
+  function extOf(name) {
+    const i = name.lastIndexOf('.')
+    return i > 0 && name.length - i <= 5 ? name.slice(i + 1).toUpperCase() : 'FILE'
+  }
+
+  const statusText = { done: 'done', failed: 'failed', canceled: 'canceled' }
 
   function refresh() {
     scanning = true
@@ -202,9 +268,15 @@
         </li>
       {/each}
     </ul>
+
+    <section class="receive">
+      <div class="label">Received files</div>
+      <button class="path" title={receiveDir} onclick={() => run(OpenPath, receiveDir)}>{'\u200e' + receiveDir + '\u200e'}</button>
+      <button class="link small" onclick={changeReceiveDir}>Change folder</button>
+    </section>
   </aside>
 
-  <main class="main">
+  <main class="main" class:drop-target={!!selected}>
     {#if serviceError}
       <div class="banner">Background service stopped: {serviceError}</div>
     {/if}
@@ -226,20 +298,53 @@
       <div class="messages" bind:this={messagesEl}>
         {#each thread as m (m.id)}
           <div class="msg" class:out={!m.incoming}>
-            <div class="bubble">
-              <pre>{m.text}</pre>
+            <div class="bubble" class:file-bubble={m.file}>
+              {#if m.file}
+                {@const f = m.file}
+                {@const p = progress[m.id]}
+                <div class="file">
+                  <div class="file-icon">{extOf(f.name)}</div>
+                  <div class="file-body">
+                    <div class="file-name" title={f.name}>{f.name}</div>
+                    {#if f.status === 'active'}
+                      <div class="bar"><div class="fill" style="width: {pct(p?.done ?? 0, f.size)}%"></div></div>
+                      <div class="muted small">
+                        {#if p}
+                          {fmtSize(p.done)} of {fmtSize(f.size)} · {fmtSize(p.rate)}/s
+                        {:else}
+                          {fmtSize(f.size)} · {m.incoming ? 'starting…' : 'waiting…'}
+                        {/if}
+                      </div>
+                    {:else}
+                      <div class="muted small" class:error={f.status === 'failed'} title={f.error}>
+                        {fmtSize(f.size)} · {statusText[f.status]}{f.error ? `: ${f.error}` : ''}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              {:else}
+                <pre>{m.text}</pre>
+              {/if}
               <div class="meta">
                 <span>{fmtTime(m.time)}</span>
-                <button class="copy" onclick={() => copy(m.text)}>Copy</button>
+                {#if m.file?.status === 'active'}
+                  <button class="action" onclick={() => CancelTransfer(m.id)}>Cancel</button>
+                {:else if m.file?.status === 'done' && m.file.path}
+                  <button class="action" onclick={() => run(OpenPath, m.file.path)}>Open</button>
+                  <button class="action" onclick={() => run(RevealPath, m.file.path)}>Show in folder</button>
+                {:else if !m.file}
+                  <button class="copy" onclick={() => copy(m.text)}>Copy</button>
+                {/if}
               </div>
             </div>
           </div>
         {:else}
-          <div class="empty">No messages with {selected.name} yet.</div>
+          <div class="empty">No messages with {selected.name} yet.<br/>Type below, or drag files here.</div>
         {/each}
       </div>
 
       <form class="composer" onsubmit={(e) => { e.preventDefault(); send() }}>
+        <button type="button" class="icon attach" title="Send files (or drag them here)" onclick={attach}>📎</button>
         <textarea
           bind:this={composerEl}
           bind:value={draft}
@@ -259,6 +364,10 @@
     {/if}
   </main>
 </div>
+
+{#if selected}
+  <div class="drop-hint">Drop to send to {selected.name}</div>
+{/if}
 
 {#if showAdd}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->

@@ -9,6 +9,7 @@
   --accent-text: #ffffff;
   --bubble-in: #ffffff;
   --bubble-out: #e0e7ff;
+  --bubble-out-link: #4338ca;
   --online: #16a34a;
   --offline: #a1a1aa;
   --danger: #dc2626;
@@ -27,6 +28,7 @@
     --accent: #6366f1;
     --bubble-in: #26262b;
     --bubble-out: #312e81;
+    --bubble-out-link: #c7d2fe;
     --offline: #52525b;
     --danger: #f87171;
     --hover: rgba(255, 255, 255, 0.06);
@@ -249,3 +251,62 @@ input:focus, textarea:focus { border-color: var(--accent); }
   max-width: 80%;
 }
 .toast.error-toast { background: var(--danger); color: #fff; }
+
+/* Files */
+.receive { padding: 12px 16px; border-top: 1px solid var(--border); }
+.path {
+  display: block;
+  width: 100%;
+  margin: 4px 0 2px;
+  text-align: left;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* keep the end of long paths visible */
+}
+.path:hover { color: var(--accent); }
+.link { color: var(--accent); }
+.link:hover { text-decoration: underline; }
+
+.file-bubble { min-width: 280px; }
+.file { display: flex; gap: 10px; align-items: center; }
+.file-icon {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+.msg.out .file-icon { background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.file-body { flex: 1; min-width: 0; }
+.file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.bar { height: 5px; border-radius: 3px; background: var(--border); margin: 5px 0 3px; overflow: hidden; }
+.fill { height: 100%; background: var(--accent); transition: width 0.15s linear; }
+.action { font-size: 11px; color: var(--accent); }
+.action:hover { text-decoration: underline; }
+.msg.out .action, .msg.out .file-icon { color: var(--bubble-out-link); }
+
+.attach { align-self: center; font-size: 17px; width: 34px; height: 34px; }
+
+/* Drag and drop: Wails adds wails-drop-target-active while files hover */
+.drop-target { --wails-drop-target: drop; }
+.drop-hint {
+  display: none;
+  position: fixed;
+  inset: 12px 12px 12px 272px;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+  place-items: center;
+  pointer-events: none;
+}
+body:has(.wails-drop-target-active) .drop-hint { display: grid; }

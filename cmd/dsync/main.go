@@ -19,9 +19,10 @@ Usage:
   dsync devices [--wait 1.5s]         list devices on the local network
   dsync text [--to NAME] MESSAGE      send text to another device
   echo hi | dsync text [--to NAME]    send text read from stdin
+  dsync send [--to NAME] FILE...      send files
   dsync version
 
-Flags for text (put them before the message):
+Flags for text and send (put them before the message or files):
   --to NAME          device name or id prefix (optional if only one device is found)
   --addr HOST[:PORT] send directly, skipping discovery (e.g. over Tailscale)
 `
@@ -44,6 +45,8 @@ func main() {
 		err = cmdDevices(cfg, args)
 	case "text":
 		err = cmdText(cfg, args)
+	case "send":
+		err = cmdSend(cfg, args)
 	case "version":
 		fmt.Println("dsync", version)
 	case "help", "-h", "--help":

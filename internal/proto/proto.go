@@ -35,3 +35,14 @@ type TextMessage struct {
 	FromPort int    `json:"from_port,omitempty"`
 	Text     string `json:"text"`
 }
+
+// Headers for POST /api/v1/file. The body is the raw file content, and the
+// SHA-256 of it is sent as a trailer so the sender can hash while streaming.
+const (
+	HeaderFromID   = "X-Dsync-From-Id"
+	HeaderFromName = "X-Dsync-From-Name" // URL query-escaped
+	HeaderFromPort = "X-Dsync-From-Port"
+	HeaderFileName = "X-Dsync-File-Name" // URL query-escaped
+	HeaderFileSize = "X-Dsync-File-Size"
+	TrailerSHA256  = "X-Dsync-Sha256" // hex
+)
