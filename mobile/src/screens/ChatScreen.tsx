@@ -94,7 +94,13 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
       prevTime = time;
       prevOut = fromPhone;
     };
-    for (const m of thread.messages) push(m.time, m.fromPhone, (first) => ({ type: 'msg', key: `m${m.id}`, m, first }));
+    // The other side lists a file as soon as its upload starts ("active"). While
+    // this phone is still sending it, the sending bubble below stands for it.
+    const sending = new Set(pending.filter((p) => p.kind === 'file').map((p) => `${p.name}\u0000${p.size}`));
+    const shown = thread.messages.filter(
+      (m) => !(m.fromPhone && m.file?.status === 'active' && sending.has(`${m.file.name}\u0000${m.file.size}`)),
+    );
+    for (const m of shown) push(m.time, m.fromPhone, (first) => ({ type: 'msg', key: `m${m.id}`, m, first }));
     for (const p of pending) push(p.time, true, (first) => ({ type: 'pending', key: p.key, p, first }));
     return out.reverse(); // the list is inverted: newest at the bottom
   }, [thread.messages, pending, tr]); // tr: day labels follow the language

@@ -2,7 +2,7 @@
 
 A small React Native app that lets a phone join dsync: send text, photos and files to
 your computers, and save or share what they send back. Install it from a release (APK for
-Android, .ipa for iPhone), or run it in **Expo Go** while working on it.
+Android, .ipa for iPhone), or build it yourself (see *Run it while developing*).
 
 It talks to dsync on the computer with the phone protocol in
 [`../docs/phone-protocol.md`](../docs/phone-protocol.md) (plain HTTP on port 47102,
@@ -28,25 +28,33 @@ workflow reads it from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD
 `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets). Every release has to use the same
 key, or phones refuse the update. The app's version follows `../wails.json`.
 
-## Run it in Expo Go (development)
+## Run it while developing
 
-1. Install **Expo Go** on the phone (App Store / Play Store).
-2. On the laptop:
+The app has native parts (phone-to-phone uses a local server, Android keeps transfers going
+with a foreground service), so it doesn't run in Expo Go. Build a development copy instead.
 
-   ```sh
-   cd mobile
-   npm install
-   npx expo start
-   ```
+**Android**, with the Android SDK and a JDK 17 installed (`ANDROID_HOME` and `JAVA_HOME` set)
+and a phone connected with USB debugging, or an emulator running:
 
-3. Scan the QR code in the terminal: with the Camera app on iPhone, or from inside
-   Expo Go on Android.
+```sh
+cd mobile
+npm install
+npx expo run:android
+```
 
-The phone and the laptop must be on the same Wi-Fi. If Expo Go can't load the app, let
-the Expo dev server through the laptop's firewall: port **8081/tcp**, for example
-`sudo ufw allow 8081/tcp` or
-`sudo firewall-cmd --add-port=8081/tcp`. (If that isn't possible, `npx expo start --tunnel`
-works through the internet instead.)
+It installs a debug build, replacing an installed release (both use the same app id), and
+reloads when you save.
+
+**iPhone** needs a Mac with Xcode: `npx expo run:ios --device`.
+
+The phone and the computer must be on the same Wi-Fi.
+
+## Talk to another phone
+
+On one phone tap **Connect a phone**; it shows a QR code (works once, for 10 minutes).
+On the other phone tap **Scan a code** and point the camera at it. Both phones must be on
+the same Wi-Fi and keep dsync open. They then show up in each other's list and can send
+text, photos and files both ways, encrypted like the connection to a computer.
 
 ## Pair with a computer
 
