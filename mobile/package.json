@@ -16,6 +16,7 @@
     "expo-image-picker": "~57.0.20",
     "expo-secure-store": "~57.0.4",
     "expo-sharing": "~57.0.22",
+    "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.4",
     "react": "19.2.3",
@@ -29,8 +30,8 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "test:crypto": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/crypto.test.mjs",
     "typecheck": "tsc --noEmit"

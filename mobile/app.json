@@ -50,7 +50,20 @@
           }
         }
       ],
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 120,
+          "resizeMode": "contain",
+          "backgroundColor": "#f7f7f9",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0f0f14"
+          }
+        }
+      ]
     ],
     "backgroundColor": "#f7f7f9",
     "scheme": "dsync-mobile"
