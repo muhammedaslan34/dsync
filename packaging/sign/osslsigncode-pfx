@@ -1,0 +1,26 @@
+#!/bin/sh
+# Signs a Windows program in place with a certificate in a .pfx file, using
+# osslsigncode from the dsync-nsis Docker image (so nothing else needs to be
+# installed). The password comes from DSYNC_SIGN_PASSWORD.
+#   osslsigncode-pfx CERT.pfx FILE.exe
+set -e
+[ $# -eq 2 ] || { echo "usage: $0 CERT.pfx FILE.exe" >&2; exit 2; }
+root=$(cd "$(dirname "$0")/../.." && pwd)
+pfx=$(realpath "$1")
+file=$(realpath "$2")
+# Tagged by the Dockerfile's hash, so a changed Dockerfile builds a new image.
+image="dsync-nsis:$(sha256sum "$root/packaging/nsis/Dockerfile" | cut -c1-12)"
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+	docker build -q -t "$image" "$root/packaging/nsis" >&2
+fi
+docker run --rm -u "$(id -u):$(id -g)" \
+	-v "$(dirname "$pfx"):/cert:ro" -v "$(dirname "$file"):/work" \
+	-i --entrypoint osslsigncode "$image" \
+	sign -pkcs12 "/cert/$(basename "$pfx")" -readpass /dev/stdin \
+	-n dsync -i https://dsync.pixeloud.com -h sha256 \
+	-ts http://timestamp.digicert.com \
+	-in "/work/$(basename "$file")" -out "/work/$(basename "$file").signed" \
+	<<PASS
+${DSYNC_SIGN_PASSWORD:-}
+PASS
+mv "$file.signed" "$file"

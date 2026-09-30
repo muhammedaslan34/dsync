@@ -2,6 +2,6 @@
 # isn't packaged. Used through packaging/nsis/makensis.
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nsis \
+ && apt-get install -y --no-install-recommends nsis osslsigncode ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["makensis"]

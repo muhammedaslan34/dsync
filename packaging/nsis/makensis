@@ -4,7 +4,9 @@
 # first time.
 set -e
 root=$(cd "$(dirname "$0")/../.." && pwd)
-if ! docker image inspect dsync-nsis >/dev/null 2>&1; then
-	docker build -q -t dsync-nsis "$root/packaging/nsis" >&2
+# Tagged by the Dockerfile's hash, so a changed Dockerfile builds a new image.
+image="dsync-nsis:$(sha256sum "$root/packaging/nsis/Dockerfile" | cut -c1-12)"
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+	docker build -q -t "$image" "$root/packaging/nsis" >&2
 fi
-exec docker run --rm -u "$(id -u):$(id -g)" -v "$root:$root" -w "$PWD" dsync-nsis "$@"
+exec docker run --rm -u "$(id -u):$(id -g)" -v "$root:$root" -w "$PWD" "$image" "$@"

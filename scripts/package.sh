@@ -8,6 +8,12 @@
 # Needs Go, Node/npm, the Wails CLI, WebKitGTK 4.1, makepkg (for the Arch
 # package) and Docker (for makensis, see packaging/nsis).
 #   --skip-tests   don't run the tests first
+#
+# Windows code signing (removes "Unknown publisher"): set DSYNC_SIGN_CMD to a
+# command that signs the file given as its last argument in place, e.g.
+#   DSYNC_SIGN_CMD="packaging/sign/osslsigncode-pfx cert.pfx"   (a .pfx file)
+#   DSYNC_SIGN_CMD="jsign --storetype TRUSTEDSIGNING ..."        (a cloud HSM)
+# See packaging/sign/README.md. Without it the Windows files are unsigned.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -34,11 +40,28 @@ wails build -clean -trimpath -ldflags "$ldflags" >/dev/null
 cp build/bin/dsync-gui dist/linux/
 CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o dist/linux/dsync ./cmd/dsync
 
+# sign FILE signs a Windows program in place when DSYNC_SIGN_CMD is set.
+sign() {
+	[ -n "${DSYNC_SIGN_CMD:-}" ] || return 0
+	echo "    signing $(basename "$1")"
+	$DSYNC_SIGN_CMD "$1"
+}
+
 step "Building for Windows"
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o dist/windows/dsync.exe ./cmd/dsync
+sign dist/windows/dsync.exe
 PATH="$PWD/packaging/nsis:$PATH" wails build -platform windows/amd64 -nsis -trimpath -ldflags "$ldflags" >/dev/null
+setup="build/bin/dsync-setup-$version-windows-amd64.exe"
+if [ -n "${DSYNC_SIGN_CMD:-}" ]; then
+	# Wails packs the program into the installer as it builds it, so sign the
+	# program, pack it again, then sign the installer.
+	sign build/bin/dsync-gui.exe
+	(cd build/windows/installer && "$OLDPWD/packaging/nsis/makensis" -V2 \
+		"-DARG_WAILS_AMD64_BINARY=$OLDPWD/build/bin/dsync-gui.exe" project.nsi)
+	sign "$setup"
+fi
 cp build/bin/dsync-gui.exe dist/windows/
-cp "build/bin/dsync-setup-$version-windows-amd64.exe" "$out/"
+cp "$setup" "$out/"
 
 step "Packaging for Linux"
 name="dsync-$version-linux-x86_64"
