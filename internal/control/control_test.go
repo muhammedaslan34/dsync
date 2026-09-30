@@ -157,7 +157,7 @@ func TestMoonlightCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd.Wait()
-	if err := m.Stream("192.168.1.20", StreamOptions{}); err != nil {
+	if _, err := m.Stream("192.168.1.20", StreamOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -325,6 +325,8 @@ func TestStreamOptionArgs(t *testing.T) {
 		{StreamOptions{Resolution: "1280x720", FPS: 60, DisplayMode: "fullscreen", MatchHost: true}, "--resolution 1280x720 --fps 60 --display-mode fullscreen --game-optimization"},
 		{StreamOptions{DisplayMode: "evil; rm -rf"}, ""},
 		{StreamOptions{Resolution: "1920x1080", Bitrate: 40000, YUV444: true}, "--resolution 1920x1080 --bitrate 40000 --yuv444"},
+		{StreamOptions{Mouse: "desktop"}, "--absolute-mouse"},
+		{StreamOptions{Mouse: "game"}, "--no-absolute-mouse"},
 	} {
 		if got := strings.Join(c.o.args(), " "); got != c.want {
 			t.Errorf("%+v: %q", c.o, got)

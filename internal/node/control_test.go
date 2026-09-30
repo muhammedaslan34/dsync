@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +141,20 @@ func (f *controlFakes) calls() string {
 	return string(b)
 }
 
+// waitCall waits for the fake Moonlight to have been run with want: dsync
+// reports "done" once Moonlight has started, and the fake process writes
+// its line a moment later (slower on some machines, like macOS runners).
+func (f *controlFakes) waitCall(t *testing.T, want string) {
+	t.Helper()
+	for range 250 {
+		if strings.Contains(f.calls(), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("moonlight calls:\n%s\nwant %q", f.calls(), want)
+}
+
 // sunshineUp pretends Sunshine is running here by listening where
 // SunshineRunning looks.
 func sunshineUp(t *testing.T) {
@@ -234,9 +249,7 @@ func TestControlPairsAutomaticallyAndStreams(t *testing.T) {
 	if s := la.waitControl(t); s.Step != "done" {
 		t.Fatalf("ended with %+v", s)
 	}
-	if !strings.Contains(f.calls(), "stream 127.0.0.1 Desktop") {
-		t.Errorf("moonlight calls:\n%s", f.calls())
-	}
+	f.waitCall(t, "stream 127.0.0.1 Desktop")
 	if len(lb.pins()) != 0 {
 		t.Error("the controlled computer asked for the PIN by hand despite having a login")
 	}
@@ -276,9 +289,7 @@ func TestControlManualPIN(t *testing.T) {
 	if s := la.waitControl(t); s.Step != "done" {
 		t.Fatalf("ended with %+v", s)
 	}
-	if !strings.Contains(f.calls(), "stream 127.0.0.1 Desktop") {
-		t.Errorf("moonlight calls:\n%s", f.calls())
-	}
+	f.waitCall(t, "stream 127.0.0.1 Desktop")
 }
 
 func TestControlMissingPrograms(t *testing.T) {
@@ -353,9 +364,7 @@ func TestControlChoosesScreenAndZoom(t *testing.T) {
 	if saves != 1 || restarts != 1 {
 		t.Errorf("saves=%d restarts=%d, want 1 and 1", saves, restarts)
 	}
-	if want := "stream 127.0.0.1 Desktop --resolution 1280x720 --fps 60 --bitrate 17777 --display-mode fullscreen --game-optimization"; !strings.Contains(f.calls(), want) {
-		t.Errorf("moonlight calls:\n%s\nwant %q", f.calls(), want)
-	}
+	f.waitCall(t, "stream 127.0.0.1 Desktop --resolution 1280x720 --fps 60 --bitrate 17777 --display-mode fullscreen --absolute-mouse --game-optimization")
 
 	// Same choices again: nothing to change, so no restart.
 	la.reset()
@@ -365,5 +374,50 @@ func TestControlChoosesScreenAndZoom(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.saves != 1 || f.restarts != 1 {
 		t.Errorf("restarted Sunshine again for the same settings: saves=%d restarts=%d", f.saves, f.restarts)
+	}
+}
+
+func TestPointerSpeedRestoredWhenMoonlightQuits(t *testing.T) {
+	var mu sync.Mutex
+	speed := 0.0
+	oldAdj, oldRes := adjustPointer, restorePointer
+	adjustPointer = func(step int) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		prev := speed
+		speed += float64(step) * 0.3
+		return fmt.Sprint(prev), nil
+	}
+	restorePointer = func(s string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Sscan(s, &speed)
+		return nil
+	}
+	t.Cleanup(func() { adjustPointer, restorePointer = oldAdj, oldRes })
+	get := func() float64 { mu.Lock(); defer mu.Unlock(); return speed }
+
+	n := newTestNode(t, "Laptop")
+	done := make(chan struct{})
+	n.adjustPointerWhile(2, done)
+	if get() != 0.6 || n.cfg.PointerRestore != "0" {
+		t.Fatalf("while controlling: speed %v, saved %q", get(), n.cfg.PointerRestore)
+	}
+	close(done) // Moonlight quits
+	for i := 0; i < 100 && get() != 0; i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if get() != 0 {
+		t.Fatalf("speed not restored: %v", get())
+	}
+
+	// dsync quit while controlling: the next start restores it.
+	n.adjustPointerWhile(-1, make(chan struct{}))
+	if get() == 0 {
+		t.Fatal("not adjusted")
+	}
+	n.restoreSavedPointer() // what Run does at startup
+	if get() != 0 || n.cfg.PointerRestore != "" {
+		t.Fatalf("after restart: speed %v, saved %q", get(), n.cfg.PointerRestore)
 	}
 }

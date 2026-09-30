@@ -109,6 +109,7 @@ export namespace node {
 	export class ControlInfo {
 	    os: string;
 	    configurable: boolean;
+	    pointerAdjustable: boolean;
 	    displays: proto.Display[];
 	    screen: string;
 	    error?: string;
@@ -121,6 +122,7 @@ export namespace node {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.os = source["os"];
 	        this.configurable = source["configurable"];
+	        this.pointerAdjustable = source["pointerAdjustable"];
 	        this.displays = this.convertValues(source["displays"], proto.Display);
 	        this.screen = source["screen"];
 	        this.error = source["error"];
@@ -152,6 +154,8 @@ export namespace node {
 	    quality: string;
 	    sharpText: boolean;
 	    zoom: boolean;
+	    mouse: string;
+	    pointerSpeed: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ControlOptions(source);
@@ -166,6 +170,8 @@ export namespace node {
 	        this.quality = source["quality"];
 	        this.sharpText = source["sharpText"];
 	        this.zoom = source["zoom"];
+	        this.mouse = source["mouse"];
+	        this.pointerSpeed = source["pointerSpeed"];
 	    }
 	}
 	export class FileInfo {

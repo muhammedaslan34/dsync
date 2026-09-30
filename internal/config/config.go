@@ -37,6 +37,9 @@ type Config struct {
 	SunshineUser     string `json:"sunshine_user,omitempty"`
 	SunshinePassword string `json:"sunshine_password,omitempty"`
 	SunshineWeb      string `json:"sunshine_web,omitempty"`
+	// PointerRestore is the pointer speed to put back after remote
+	// control, kept here in case dsync quits while controlling.
+	PointerRestore string `json:"pointer_restore,omitempty"`
 	// Trusted are the paired devices. Only they may send us data.
 	Trusted []TrustedPeer `json:"trusted,omitempty"`
 

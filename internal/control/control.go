@@ -137,6 +137,9 @@ type StreamOptions struct {
 	// YUV444 keeps full color detail, which keeps text sharp; needs a
 	// recent GPU on both sides.
 	YUV444 bool `json:"yuv444"`
+	// Mouse is "desktop" (the remote pointer follows this one, at its
+	// speed), "game" (captured, raw movement) or "" (Moonlight's setting).
+	Mouse string `json:"mouse"`
 	// MatchHost asks Sunshine to switch the host's screen to the stream's
 	// resolution (needs Moonlight's "optimize game settings").
 	MatchHost bool `json:"-"`
@@ -160,14 +163,18 @@ func (o StreamOptions) args() []string {
 	if o.YUV444 {
 		a = append(a, "--yuv444")
 	}
+	switch o.Mouse {
+	case "desktop":
+		a = append(a, "--absolute-mouse")
+	case "game":
+		a = append(a, "--no-absolute-mouse")
+	}
 	if o.MatchHost {
 		a = append(a, "--game-optimization")
 	}
 	return a
 }
 
-// Stream opens a Moonlight window controlling host's desktop. It returns
-// once Moonlight has started; the stream runs on its own.
 // Bitrate returns the stream bitrate in kbit/s for a resolution and frame
 // rate: Moonlight's own default (about 20 Mbit/s for 1080p at 60 fps)
 // times the quality's factor. Desktops need more than games for sharp
@@ -189,13 +196,19 @@ func Bitrate(resolution string, fps int, quality string) int {
 	return max(5000, min(kbps, 150000))
 }
 
-func (m Moonlight) Stream(host string, o StreamOptions) error {
+// Stream opens a Moonlight window controlling host's desktop. It returns
+// once Moonlight has started; the returned channel closes when it quits.
+func (m Moonlight) Stream(host string, o StreamOptions) (<-chan struct{}, error) {
 	cmd := m.command(nil, append([]string{"stream", host, DesktopApp}, o.args()...)...)
 	if err := cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
-	go cmd.Wait()
-	return nil
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+	return done, nil
 }
 
 // Sunshine is the Sunshine host on this computer.

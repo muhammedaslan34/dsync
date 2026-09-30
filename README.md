@@ -21,6 +21,15 @@ Download the file for your system from `dist/release` (see *Packaging* below):
   installs for your user only (no root), adds dsync to the app menu, and offers to open
   the firewall. `./uninstall.sh` removes it. Needs WebKitGTK 4.1.
 
+## macOS
+
+Download `dsync-VERSION-macos-universal.dmg` from the release (it runs on Apple Silicon and
+Intel Macs), open it and drag **dsync** into Applications. dsync isn't signed with an Apple
+Developer ID, so the first time macOS says it can't be opened: right-click dsync → **Open**
+→ **Open**. Allow it on the local network when macOS asks. On macOS there's no menu bar icon
+yet, so closing the window quits dsync. The disk image is built by
+`.github/workflows/macos.yml` on GitHub's Macs whenever a release is published.
+
 ## Updates
 
 dsync checks GitHub for a new release shortly after it starts and twice a day; an
@@ -157,6 +166,9 @@ bigger: a Windows PC switches its resolution to match while you control it, and 
 afterwards), fullscreen or window, the frame rate, and the **quality** (bitrate: *High* by default, *Best* for the sharpest
 text on a fast network) with an optional **Sharpest text** switch (full 4:4:4 color, for
 recent graphics on both sides). *Full size* streams at your screen's real resolution.
+The **mouse** works in *Desktop* mode by default (the pointer over there follows yours
+exactly), or *Game* mode (captured, raw movement); on Linux (GNOME) and Windows you can
+also make your pointer faster or slower while controlling, and it goes back afterwards.
 Choosing the screen and the
 bigger sizes on Windows use the Sunshine login saved in dsync on that PC. While
 controlling, Ctrl+Alt+Shift+Q stops and Ctrl+Alt+Shift+X switches fullscreen; to zoom into

@@ -159,6 +159,7 @@ func (n *Node) Run(ctx context.Context) error {
 	go n.scanLoop(ctx)
 	go n.cleanParts()
 	go n.cleanOutbox()
+	go n.restoreSavedPointer()
 	go n.clipLoop(ctx)
 
 	var runErr error

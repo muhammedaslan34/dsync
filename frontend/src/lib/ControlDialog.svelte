@@ -99,6 +99,25 @@
             </label>
           </div>
 
+          <div class="opt">
+            <span class="opt-label">Mouse</span>
+            <div class="segmented wide">
+              <button class:on={options.mouse !== 'game'} onclick={() => (options.mouse = 'desktop')}>Desktop</button>
+              <button class:on={options.mouse === 'game'} onclick={() => (options.mouse = 'game')}>Game</button>
+            </div>
+            <p class="muted small">
+              {options.mouse === 'game' ? "Captures the mouse and sends raw movement, for games. Its speed follows the other computer's settings." : 'The pointer there follows yours exactly, at your usual speed. Best for using a desktop.'}
+            </p>
+            {#if info.pointerAdjustable}
+              <label class="speed">
+                <span class="opt-label">Pointer speed while controlling</span>
+                <input type="range" min="-2" max="2" step="1" bind:value={options.pointerSpeed} />
+                <span class="speed-scale muted small"><span>Slower</span><span>Normal</span><span>Faster</span></span>
+              </label>
+              {#if options.pointerSpeed}<p class="muted small">This computer's pointer is {options.pointerSpeed > 0 ? 'faster' : 'slower'} while Moonlight is open, and goes back to normal when you stop.</p>{/if}
+            {/if}
+          </div>
+
           <div class="opt-row">
             <div class="opt">
               <span class="opt-label">Window</span>

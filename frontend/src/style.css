@@ -991,3 +991,7 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .screen-text { display: flex; flex-direction: column; }
 .ctl-tips { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 8px; background: var(--sidebar); line-height: 1.45; }
 .ctl-tips b { color: var(--text-2); font-weight: 600; }
+
+.speed { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.speed input[type="range"] { width: 100%; padding: 0; border: 0; accent-color: var(--accent); background: transparent; box-shadow: none; }
+.speed-scale { display: flex; justify-content: space-between; }

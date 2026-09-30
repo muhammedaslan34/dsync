@@ -362,7 +362,7 @@
   // Remote control starts with an options step; choices are remembered
   // per device.
   function loadControlOptions(id) {
-    const defaults = { screen: '', resolution: '', displayMode: 'fullscreen', fps: 60, quality: 'high', sharpText: false }
+    const defaults = { screen: '', resolution: '', displayMode: 'fullscreen', fps: 60, quality: 'high', sharpText: false, mouse: 'desktop', pointerSpeed: 0 }
     try {
       return { ...defaults, ...JSON.parse(localStorage.getItem('control:' + id) || '{}') }
     } catch {

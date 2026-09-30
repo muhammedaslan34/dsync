@@ -283,15 +283,47 @@ type ControlOptions struct {
 	// Zoom means Resolution is a "bigger" size: the controlled PC switches
 	// to it (Windows), so everything looks larger.
 	Zoom bool `json:"zoom"`
+	// Mouse is "desktop" (default: the remote pointer follows this one) or
+	// "game" (captured, raw movement).
+	Mouse string `json:"mouse"`
+	// PointerSpeed makes this computer's pointer faster (> 0) or slower
+	// while controlling, -2..2; 0 leaves it alone.
+	PointerSpeed int `json:"pointerSpeed"`
+}
+
+// Pointer speed changes go through these so tests don't touch the real
+// settings.
+var (
+	adjustPointer  = control.AdjustPointer
+	restorePointer = control.RestorePointer
+)
+
+// restoreSavedPointer puts back a pointer speed left changed when dsync
+// quit while controlling.
+func (n *Node) restoreSavedPointer() {
+	n.mu.Lock()
+	state := n.cfg.PointerRestore
+	n.mu.Unlock()
+	if state == "" {
+		return
+	}
+	restorePointer(state)
+	n.mu.Lock()
+	n.cfg.PointerRestore = ""
+	n.cfg.Save()
+	n.mu.Unlock()
 }
 
 // ControlInfo tells the options dialog what the device offers.
 type ControlInfo struct {
-	OS           string          `json:"os"`
-	Configurable bool            `json:"configurable"`
-	Displays     []proto.Display `json:"displays"`
-	Screen       string          `json:"screen"`
-	Error        string          `json:"error,omitempty"`
+	OS           string `json:"os"`
+	Configurable bool   `json:"configurable"`
+	// PointerAdjustable means this computer's pointer speed can be changed
+	// while controlling.
+	PointerAdjustable bool            `json:"pointerAdjustable"`
+	Displays          []proto.Display `json:"displays"`
+	Screen            string          `json:"screen"`
+	Error             string          `json:"error,omitempty"`
 }
 
 // ControlInfo asks a device which screens it has, for the options dialog.
@@ -307,7 +339,7 @@ func (n *Node) ControlInfo(ctx context.Context, peerID string) ControlInfo {
 	if p == nil || !paired {
 		return ControlInfo{Error: "not paired"}
 	}
-	info := ControlInfo{OS: peer.OS}
+	info := ControlInfo{OS: peer.OS, PointerAdjustable: control.PointerAdjustable()}
 	st, err := n.cl.ControlStatus(ctx, n.peerAddr(peer), t.Fingerprint)
 	if err != nil {
 		info.Error = err.Error()
@@ -423,6 +455,10 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts Contro
 	stream := control.StreamOptions{
 		Resolution: opts.Resolution, FPS: opts.FPS, DisplayMode: opts.DisplayMode,
 		Bitrate: control.Bitrate(opts.Resolution, opts.FPS, opts.Quality), YUV444: opts.SharpText,
+		Mouse: opts.Mouse,
+	}
+	if stream.Mouse == "" {
+		stream.Mouse = "desktop"
 	}
 	// Only a "bigger" size switches the PC's resolution; full size streams
 	// at the screen's own resolution and changes nothing there.
@@ -454,7 +490,34 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts Contro
 	}
 
 	state("streaming", "Opening Moonlight…")
-	return ml.Stream(host, stream)
+	done, err := ml.Stream(host, stream)
+	if err != nil {
+		return err
+	}
+	n.adjustPointerWhile(opts.PointerSpeed, done)
+	return nil
+}
+
+// adjustPointerWhile changes this computer's pointer speed until done
+// closes (Moonlight quit). The original is also saved in the settings in
+// case dsync quits first.
+func (n *Node) adjustPointerWhile(step int, done <-chan struct{}) {
+	if step == 0 {
+		return
+	}
+	n.restoreSavedPointer() // never stack changes
+	state, err := adjustPointer(step)
+	if err != nil || state == "" {
+		return
+	}
+	n.mu.Lock()
+	n.cfg.PointerRestore = state
+	n.cfg.Save()
+	n.mu.Unlock()
+	go func() {
+		<-done
+		n.restoreSavedPointer()
+	}()
 }
 
 // pairMoonlight pairs Moonlight with Sunshine on the peer once, sending the
