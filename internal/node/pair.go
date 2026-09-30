@@ -240,6 +240,13 @@ func (n *Node) handlePair(w http.ResponseWriter, r *http.Request) {
 // best-effort basis).
 func (n *Node) Unpair(ctx context.Context, peerID string) error {
 	n.mu.Lock()
+	_, isPhone := n.cfg.PhoneByID(peerID)
+	n.mu.Unlock()
+	if isPhone {
+		n.forgetPhone(peerID)
+		return nil
+	}
+	n.mu.Lock()
 	t, ok := n.cfg.TrustedByID(peerID)
 	var addr string
 	if p := n.peers[peerID]; p != nil {

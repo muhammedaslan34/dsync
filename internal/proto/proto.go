@@ -5,6 +5,7 @@ const (
 	Version         = 2
 	DiscoveryPort   = 47100 // UDP
 	DefaultHTTPPort = 47101 // TCP
+	PhonePort       = 47102 // TCP, plain HTTP with sealed bodies (phones)
 	MaxTextBytes    = 1 << 20
 )
 

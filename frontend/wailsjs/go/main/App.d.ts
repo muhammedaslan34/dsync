@@ -97,6 +97,8 @@ export function StartControl(arg1:string,arg2:node.ControlOptions):Promise<void>
 
 export function StartPair(arg1:string):Promise<string>;
 
+export function StartPhonePairing():Promise<node.PhonePairing>;
+
 export function Status():Promise<string>;
 
 export function Unpair(arg1:string):Promise<void>;

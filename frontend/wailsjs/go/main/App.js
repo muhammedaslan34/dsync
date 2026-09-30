@@ -186,6 +186,10 @@ export function StartPair(arg1) {
   return window['go']['main']['App']['StartPair'](arg1);
 }
 
+export function StartPhonePairing() {
+  return window['go']['main']['App']['StartPhonePairing']();
+}
+
 export function Status() {
   return window['go']['main']['App']['Status']();
 }

@@ -318,3 +318,6 @@ func (a *App) AllowSunshineFirewall() error {
 // ClearHistory removes the messages with a device, or all messages if
 // peerID is empty. Received files stay on disk.
 func (a *App) ClearHistory(peerID string) error { return a.node.ClearHistory(peerID) }
+
+// StartPhonePairing makes a QR code for pairing a phone.
+func (a *App) StartPhonePairing() node.PhonePairing { return a.node.StartPhonePairing() }

@@ -307,6 +307,7 @@ export namespace node {
 	    lastSeen: number;
 	    lastHeard: number;
 	    oneWay: boolean;
+	    phone: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Peer(source);
@@ -324,6 +325,21 @@ export namespace node {
 	        this.lastSeen = source["lastSeen"];
 	        this.lastHeard = source["lastHeard"];
 	        this.oneWay = source["oneWay"];
+	        this.phone = source["phone"];
+	    }
+	}
+	export class PhonePairing {
+	    url: string;
+	    expires: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PhonePairing(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.expires = source["expires"];
 	    }
 	}
 

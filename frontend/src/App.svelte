@@ -7,7 +7,7 @@
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version, ControlInfo,
     FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
-    AllowSunshineFirewall, ClearHistory,
+    AllowSunshineFirewall, ClearHistory, StartPhonePairing,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -19,6 +19,7 @@
   import PasteDialog from './lib/PasteDialog.svelte'
   import ControlDialog from './lib/ControlDialog.svelte'
   import ControlPinDialog from './lib/ControlPinDialog.svelte'
+  import PhoneDialog from './lib/PhoneDialog.svelte'
   import { pastedItems, pasteName, toBase64, baseName, MAX_PASTE_BYTES } from './lib/paste.js'
   import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
 
@@ -42,6 +43,7 @@
   let pasted = $state(null) // items waiting for confirmation: { peerId, items }
   let attachOpen = $state(false)
   let clipStatus = $state({ enabled: false, available: false })
+  let phonePairing = $state(null) // QR code shown while connecting a phone
   let bg = $state({})
   let hostInfo = $state({})
   let version = $state('')
@@ -123,6 +125,11 @@
     })
     EventsOn('control:pin', (p) => { controlPins = [...controlPins, p] })
     EventsOn('update:available', (u) => { updateInfo = u })
+    EventsOn('phone:paired', (p) => {
+      phonePairing = null
+      showToast(`${p.name} is connected`)
+      select(p.id)
+    })
     EventsOn('history:cleared', (peerId) => {
       // Running transfers stay, as in the backend.
       messages = messages.filter((m) => (peerId && m.peerId !== peerId) || m.file?.status === 'active')
@@ -295,6 +302,11 @@
     const r = pairIn[0]
     AnswerPair(r.id, accept)
     pairIn = pairIn.slice(1)
+  }
+
+  async function connectPhone() {
+    dialog = null
+    phonePairing = await StartPhonePairing()
   }
 
   async function clearHistory(peerId) {
@@ -494,7 +506,8 @@
               </span>
               <span class="device-row">
                 <span class="preview">
-                  {#if d.oneWay}<span class="one-way">Can't reach it</span>
+                  {#if d.phone && !last}<span>{d.online ? 'Phone · online' : 'Phone'}</span>
+                  {:else if d.oneWay}<span class="one-way">Can't reach it</span>
                   {:else if !d.paired && d.online}<span class="not-paired"><Icon name="lock" size={11} stroke={2.5} /> Not paired</span>
                   {:else if last}{preview(last)}{:else}{d.online ? `Online · ${osLabel[d.os] ?? d.os}` : 'Offline'}{/if}
                 </span>
@@ -541,9 +554,11 @@
         <div class="head-actions">
           {#if selected.paired}
             <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
-            <button class="icon-btn" title="Send a folder" onclick={() => run(() => PickFolder(selected.id))}><Icon name="folderUp" /></button>
+            {#if !selected.phone}
+              <button class="icon-btn" title="Send a folder" onclick={() => run(() => PickFolder(selected.id))}><Icon name="folderUp" /></button>
+            {/if}
           {/if}
-          {#if selected.paired && selected.online}
+          {#if selected.paired && selected.online && !selected.phone}
             <button class="icon-btn" title="Control this computer" onclick={() => startControl(selected)}><Icon name="monitor" /></button>
           {/if}
           {#if messages.some((m) => m.peerId === selected.id)}
@@ -727,6 +742,8 @@
       hostInfo = await HostInfo()
     })}
     onClearAll={() => (dialog = 'clear-all')}
+    onConnectPhone={connectPhone}
+    phones={peers.filter((p) => p.phone)}
     onFixFirewall={() => fixFirewall(FixFirewall, 'dsync is now allowed through Windows Firewall')}
     onMakePrivate={() => fixFirewall(MakeNetworkPrivate, 'Your network is now set to Private')}
     onSunshineLogin={async (user, pw) => {
@@ -789,6 +806,15 @@
   <PairDialog pair={pairIn[0]} onAnswer={answerPair} />
 {:else if pairOut}
   <PairDialog pair={pairOut} onCancel={closePairOut} onRetry={() => startPair({ id: pairOut.peerId, name: pairOut.name })} />
+{/if}
+
+{#if phonePairing}
+  <PhoneDialog
+    pairing={phonePairing}
+    onRefresh={async () => (phonePairing = await StartPhonePairing())}
+    onClose={() => (phonePairing = null)}
+    onCopy={copy}
+  />
 {/if}
 
 {#if controlPins.length}

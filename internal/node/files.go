@@ -107,6 +107,9 @@ func (n *Node) SendFiles(ctx context.Context, peerID string, paths []string) err
 	if !ok {
 		return fmt.Errorf("unknown device %s", peerID)
 	}
+	if peer.Phone {
+		return n.sendToPhone(peer, "", paths)
+	}
 	t, paired := n.trusted(peerID)
 	if !paired {
 		return fmt.Errorf("pair with %s first", peer.Name)

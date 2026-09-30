@@ -4,4 +4,5 @@
   <description>Send text, files and the clipboard between your computers.</description>
   <port protocol="udp" port="47100"/>
   <port protocol="tcp" port="47101"/>
+  <port protocol="tcp" port="47102"/>
 </service>

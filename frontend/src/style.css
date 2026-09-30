@@ -995,3 +995,11 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .speed { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .speed input[type="range"] { width: 100%; padding: 0; border: 0; accent-color: var(--accent); background: transparent; box-shadow: none; }
 .speed-scale { display: flex; justify-content: space-between; }
+
+/* ---------- Phones ---------- */
+.phone-dialog { width: min(420px, calc(100% - 32px)); }
+.qr { position: relative; width: 260px; margin: 6px auto 0; padding: 12px; border-radius: 14px; background: #fff; }
+.qr svg { display: block; width: 100%; height: auto; }
+.qr.expired svg { opacity: 0.12; }
+.qr-expired { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #17171c; }
+.qr-note { text-align: center; margin: 12px 0 0; line-height: 1.45; }

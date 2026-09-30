@@ -60,6 +60,9 @@ type Peer struct {
 	// OneWay means it reached us recently but we can't reach it: usually
 	// its firewall blocks incoming connections.
 	OneWay bool `json:"oneWay"`
+	// Phone is a phone paired by QR code (docs/phone-protocol.md); it is
+	// online while its app polls.
+	Phone bool `json:"phone"`
 }
 
 // oneWayWindow is how recently a device must have contacted us for "we
@@ -93,7 +96,8 @@ type Node struct {
 	// folderReps are progress callbacks of incoming folders, by message id.
 	folderReps map[int64]func(int64)
 
-	clip clipState
+	clip   clipState
+	phones phoneState
 	// controls are remote control setups in progress, by peer id.
 	controls map[string]context.CancelFunc
 }
@@ -116,8 +120,14 @@ func New(cfg *config.Config, emit func(event string, data any)) (*Node, error) {
 		parts:      map[string]*partClaim{},
 		folderReps: map[int64]func(int64){},
 		controls:   map[string]context.CancelFunc{},
+		phones: phoneState{
+			pairings: map[string]*pendingPhone{},
+			uploads:  map[string]*phoneUpload{},
+			nonces:   map[string]time.Time{},
+		},
 	}
 	n.loadHistory()
+	n.loadPhones()
 	return n, nil
 }
 
@@ -160,6 +170,11 @@ func (n *Node) Run(ctx context.Context) error {
 	go n.cleanParts()
 	go n.cleanOutbox()
 	go n.restoreSavedPointer()
+	go func() {
+		if err := n.servePhones(ctx); err != nil {
+			n.emit("error", "phones can't connect: "+err.Error())
+		}
+	}()
 	go n.clipLoop(ctx)
 
 	var runErr error
@@ -270,6 +285,7 @@ func (n *Node) Peers() []Peer {
 	for _, p := range n.peers {
 		c := *p
 		_, c.Paired = n.cfg.TrustedByID(p.ID)
+		c.Paired = c.Paired || c.Phone
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
@@ -344,13 +360,17 @@ func (n *Node) SendText(ctx context.Context, peerID, text string) error {
 	}
 	n.mu.Lock()
 	p, ok := n.peers[peerID]
-	var addr, name string
+	var peer Peer
 	if ok {
-		addr, name = p.Addr, p.Name
+		peer = *p
 	}
 	n.mu.Unlock()
+	addr, name := peer.Addr, peer.Name
 	if !ok {
 		return fmt.Errorf("unknown device %s", peerID)
+	}
+	if peer.Phone {
+		return n.sendToPhone(peer, text, nil)
 	}
 	t, paired := n.trusted(peerID)
 	if !paired {

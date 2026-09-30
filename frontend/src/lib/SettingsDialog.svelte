@@ -6,7 +6,7 @@
   let {
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
-    firewall, onFixFirewall, onMakePrivate, onClearAll,
+    firewall, onFixFirewall, onMakePrivate, onClearAll, onConnectPhone, phones = [],
     updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram, onSunshineSetup, onAllowSunshine,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
@@ -253,6 +253,16 @@
       <div class="security-row">
         <Icon name="key" size={16} />
         <span>This device's key: <span class="mono">{fingerprint}</span></span>
+      </div>
+    </section>
+
+    <section class="setting">
+      <div class="setting-title">Phones</div>
+      <div class="upd-row">
+        <span class="fw-text">
+          {#if phones.length}Connected: {phones.map((p) => p.name).join(', ')}.{:else}Send text, photos and files between your phone and this computer with the dsync phone app.{/if}
+        </span>
+        <button class="btn primary sm" onclick={onConnectPhone}><Icon name="phone" size={14} /> Connect a phone</button>
       </div>
     </section>
 

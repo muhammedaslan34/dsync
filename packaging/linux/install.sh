@@ -28,20 +28,20 @@ update-desktop-database "$data/applications" 2>/dev/null || true
 gtk-update-icon-cache -q "$data/icons/hicolor" 2>/dev/null || true
 echo "Installed dsync to $lib."
 
-# Other computers reach dsync on UDP 47100 and TCP 47101.
+# Other computers reach dsync on UDP 47100 and TCP 47101, phones on TCP 47102.
 open_firewall() {
 	if command -v ufw >/dev/null && systemctl is-active -q ufw 2>/dev/null; then
 		printf "Allow dsync through the ufw firewall? [Y/n] "
 		read -r a
 		case "$a" in [nN]*) return ;; esac
-		sudo ufw allow 47100/udp comment dsync && sudo ufw allow 47101/tcp comment dsync
+		sudo ufw allow 47100/udp comment dsync && sudo ufw allow 47101,47102/tcp comment dsync
 		return
 	fi
 	if command -v firewall-cmd >/dev/null && systemctl is-active -q firewalld 2>/dev/null; then
 		printf "Allow dsync through firewalld? [Y/n] "
 		read -r a
 		case "$a" in [nN]*) return ;; esac
-		sudo firewall-cmd --permanent --add-port=47100/udp --add-port=47101/tcp && sudo firewall-cmd --reload
+		sudo firewall-cmd --permanent --add-port=47100/udp --add-port=47101/tcp --add-port=47102/tcp && sudo firewall-cmd --reload
 	fi
 }
 if [ -t 0 ]; then open_firewall; fi

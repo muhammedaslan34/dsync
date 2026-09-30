@@ -40,6 +40,8 @@ type Config struct {
 	// PointerRestore is the pointer speed to put back after remote
 	// control, kept here in case dsync quits while controlling.
 	PointerRestore string `json:"pointer_restore,omitempty"`
+	// Phones are phones paired through a QR code (see docs/phone-protocol.md).
+	Phones []Phone `json:"phones,omitempty"`
 	// Trusted are the paired devices. Only they may send us data.
 	Trusted []TrustedPeer `json:"trusted,omitempty"`
 
@@ -51,6 +53,24 @@ type TrustedPeer struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Fingerprint string `json:"fingerprint"`
+}
+
+// Phone is a paired phone. Key is the base64 secretbox key from the QR code.
+type Phone struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"` // ios or android
+	Key      string `json:"key"`
+}
+
+// PhoneByID finds a paired phone.
+func (c *Config) PhoneByID(id string) (Phone, bool) {
+	for _, p := range c.Phones {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Phone{}, false
 }
 
 // TrustedByFingerprint finds the paired device with this key.
