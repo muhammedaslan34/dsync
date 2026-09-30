@@ -32,7 +32,7 @@ func main() {
 		Height:           640,
 		MinWidth:         640,
 		MinHeight:        420,
-		AssetServer:      &assetserver.Options{Assets: assets},
+		AssetServer:      &assetserver.Options{Assets: assets, Handler: app.imageHandler()},
 		BackgroundColour: &options.RGBA{R: 24, G: 24, B: 27, A: 1},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,

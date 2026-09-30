@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,3 +154,33 @@ func (a *App) AnswerPair(requestID string, accept bool) { a.node.AnswerPair(requ
 func (a *App) PendingPairs() []node.PairRequest { return a.node.PendingPairs() }
 
 func (a *App) Unpair(peerID string) error { return a.node.Unpair(a.ctx, peerID) }
+
+// SendPasted sends data pasted into the window (e.g. a copied image), given
+// as base64 because that is how bytes travel from JavaScript.
+func (a *App) SendPasted(peerID, name, dataBase64 string) error {
+	data, err := base64.StdEncoding.DecodeString(dataBase64)
+	if err != nil {
+		return err
+	}
+	return a.node.SendData(a.ctx, peerID, name, data)
+}
+
+// imageHandler serves pictures for the conversation at /image/{message id}.
+// Only image files recorded in the history can be served.
+func (a *App) imageHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		idStr, ok := strings.CutPrefix(r.URL.Path, "/image/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if !ok || err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		path, ok := a.node.ImagePath(id)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		http.ServeFile(w, r, path)
+	})
+}

@@ -53,8 +53,10 @@ const (
 	// readIdleTimeout ends an incoming transfer when no data arrives for
 	// this long, e.g. after the sender's Wi-Fi drops without closing.
 	readIdleTimeout = 60 * time.Second
-	partPrefix      = ".dsync-"
-	partSuffix      = ".part"
+	// diskReserve is left free when checking space for an incoming file.
+	diskReserve = 64 << 20
+	partPrefix  = ".dsync-"
+	partSuffix  = ".part"
 )
 
 // retryDelays are the waits between attempts when a connection drops while
@@ -235,6 +237,14 @@ func (n *Node) handleFileOffset(w http.ResponseWriter, r *http.Request, from con
 		} else {
 			os.Remove(part) // not the same file after all
 		}
+	}
+	// Refuse up front rather than failing when the disk fills up.
+	dir := n.ReceiveDir()
+	os.MkdirAll(dir, 0o755)
+	if free, err := freeSpace(dir); err == nil && free < req.Size-off+diskReserve {
+		http.Error(w, fmt.Sprintf("not enough disk space on %s (needs %s, %s free)",
+			n.Self().Name, humanSize(req.Size-off), humanSize(free)), http.StatusInsufficientStorage)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(proto.OffsetResponse{Offset: off})
@@ -419,6 +429,19 @@ func validTransferID(tid string) bool {
 	}
 	_, err := hex.DecodeString(tid)
 	return err == nil
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // cleanParts deletes partial downloads nobody resumed.

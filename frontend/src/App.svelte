@@ -3,7 +3,7 @@
   import {
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
     PickFiles, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
-    LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair,
+    LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -12,6 +12,8 @@
   import ConnectDialog from './lib/ConnectDialog.svelte'
   import SettingsDialog from './lib/SettingsDialog.svelte'
   import PairDialog from './lib/PairDialog.svelte'
+  import PasteDialog from './lib/PasteDialog.svelte'
+  import { pastedItems, pasteName, toBase64, baseName, MAX_PASTE_BYTES } from './lib/paste.js'
   import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
 
   let self = $state({ id: '', name: '', os: '', port: 0 })
@@ -31,6 +33,7 @@
   let fingerprint = $state('')
   let pairOut = $state(null) // pairing we started: { kind: 'out', peerId, name, code, error }
   let pairIn = $state([]) // incoming requests waiting for an answer
+  let pasted = $state(null) // items waiting for confirmation: { peerId, items }
   let theme = $state(loadTheme())
 
   let messagesEl = $state()
@@ -113,7 +116,13 @@
       if (selectedId && paths?.length) run(() => SendPaths(selectedId, paths))
     }, true)
 
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') dialog = null })
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        dialog = null
+        cancelPaste()
+      }
+    })
+    window.addEventListener('paste', onPaste)
 
     if (!selectedId && devices.length) select(devices[0].id)
   })
@@ -250,6 +259,52 @@
     })
   }
 
+  // A paste with images or files opens a confirmation instead of pasting
+  // into the message box. Plain text pastes normally.
+  function onPaste(e) {
+    if (!selected?.paired || dialog || pasted || pairIn.length || pairOut) return
+    const got = pastedItems(e)
+    if (!got) return
+    e.preventDefault()
+    if (got.paths) {
+      pasted = { peerId: selected.id, items: got.paths.map((p) => ({ name: baseName(p), path: p })) }
+      return
+    }
+    const tooBig = got.files.find((f) => f.size > MAX_PASTE_BYTES)
+    if (tooBig) {
+      showToast(`${tooBig.name || 'That file'} is too big to paste. Drag it into the window instead.`, 'error')
+      return
+    }
+    pasted = {
+      peerId: selected.id,
+      items: got.files.map((f, i) => ({
+        name: pasteName(f, i),
+        size: f.size,
+        file: f,
+        url: f.type.startsWith('image/') ? URL.createObjectURL(f) : null,
+      })),
+    }
+  }
+
+  async function sendPasted() {
+    const { peerId, items } = pasted
+    await run(async () => {
+      const paths = items.filter((it) => it.path).map((it) => it.path)
+      if (paths.length) await SendPaths(peerId, paths)
+      for (const it of items.filter((it) => it.file)) {
+        await SendPasted(peerId, it.name, await toBase64(it.file))
+      }
+    })
+    cancelPaste()
+    composerEl?.focus()
+  }
+
+  function cancelPaste() {
+    if (!pasted) return
+    for (const it of pasted.items) if (it.url) URL.revokeObjectURL(it.url)
+    pasted = null
+  }
+
   function preview(m) {
     if (!m) return null
     const text = m.file ? m.file.name : m.text.split('\n')[0]
@@ -384,7 +439,7 @@
             <Avatar name={selected.name} id={selected.id} size={64} />
             {#if selected.paired}
               <h3>Start sending to {selected.name}</h3>
-              <p class="muted">Type a message or command below, or drag files anywhere in this window.</p>
+              <p class="muted">Type a message or command below, drag files anywhere in this window, or paste a copied image.</p>
             {:else}
               <h3>{selected.name} isn't paired yet</h3>
               <p class="muted">Pair once to send messages and files. Everything between paired devices is encrypted.</p>
@@ -426,7 +481,7 @@
             <Icon name="send" size={17} />
           </button>
         </div>
-        <div class="composer-hint">Enter to send · Shift+Enter for a new line · Drop files to send them</div>
+        <div class="composer-hint">Enter to send · Shift+Enter for a new line · Drop or paste files and images to send them</div>
       </form>
       {/if}
     {:else}
@@ -505,6 +560,10 @@
   <PairDialog pair={pairIn[0]} onAnswer={answerPair} />
 {:else if pairOut}
   <PairDialog pair={pairOut} onCancel={closePairOut} onRetry={() => startPair({ id: pairOut.peerId, name: pairOut.name })} />
+{/if}
+
+{#if pasted}
+  <PasteDialog items={pasted.items} peerName={selected?.name ?? ''} onSend={sendPasted} onCancel={cancelPaste} />
 {/if}
 
 {#if toast}

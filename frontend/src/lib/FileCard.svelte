@@ -7,6 +7,10 @@
   let f = $derived(m.file)
   let kind = $derived(fileKind(f.name))
   let pct = $derived(f.size && progress ? Math.min(100, (progress.done / f.size) * 100) : 0)
+  // Pictures show inline once there is a local copy: always for files we
+  // sent, and for received ones when they have finished.
+  let showImage = $derived(kind === 'image' && f.path && (!m.incoming || f.status === 'done'))
+  let imageFailed = $state(false)
 
   function eta(p) {
     if (!p?.rate) return ''
@@ -16,6 +20,12 @@
     return `${(s / 3600).toFixed(1)} h left`
   }
 </script>
+
+{#if showImage && !imageFailed}
+  <button class="image-preview" title="Open" onclick={onOpen}>
+    <img src="/image/{m.id}" alt={f.name} loading="lazy" onerror={() => (imageFailed = true)} />
+  </button>
+{/if}
 
 <div class="file-card" data-kind={kind} class:failed={f.status === 'failed'}>
   <div class="file-icon"><Icon name={kind} size={20} /></div>

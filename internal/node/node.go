@@ -141,6 +141,7 @@ func (n *Node) Run(ctx context.Context) error {
 	}()
 	go n.scanLoop(ctx)
 	go n.cleanParts()
+	go n.cleanOutbox()
 
 	var runErr error
 	select {
@@ -275,7 +276,9 @@ func (n *Node) SendText(ctx context.Context, peerID, text string) error {
 		return errors.New("message is empty")
 	}
 	if len(text) > proto.MaxTextBytes {
-		return fmt.Errorf("message is larger than %d bytes; send it as a file instead", proto.MaxTextBytes)
+		// Too big for a message; send it as a text file instead.
+		name := "Message " + time.Now().Format("2006-01-02 15-04-05") + ".txt"
+		return n.SendData(ctx, peerID, name, []byte(text))
 	}
 	n.mu.Lock()
 	p, ok := n.peers[peerID]

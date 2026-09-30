@@ -42,6 +42,8 @@ export function Scan():Promise<void>;
 
 export function Self():Promise<proto.Device>;
 
+export function SendPasted(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function SendPaths(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function SendText(arg1:string,arg2:string):Promise<void>;

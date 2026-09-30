@@ -107,6 +107,9 @@ func Retryable(err error) bool {
 		errors.Is(err, context.Canceled):
 		return false
 	case errors.As(err, &se):
+		if se.Code == http.StatusInsufficientStorage {
+			return false // waiting won't free up disk space
+		}
 		return se.Code >= 500 || se.Code == http.StatusRequestTimeout || se.Code == http.StatusConflict || se.Code == http.StatusTooManyRequests
 	}
 	return true // network errors

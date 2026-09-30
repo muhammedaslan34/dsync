@@ -15,7 +15,7 @@ go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0   # installs to ~/go/b
 wails build                           # Linux app  -> build/bin/dsync-gui
 wails build -platform windows/amd64   # Windows app -> build/bin/dsync-gui.exe (built from Linux)
 wails dev                             # run with live reload while editing the UI
-go test ./internal/...                # tests (transfer resume, retries, cancel)
+go test -tags webkit2_41 ./...        # tests
 ```
 
 The optional command-line tool (for scripts) builds with plain Go:
@@ -55,6 +55,14 @@ If a device doesn't appear by itself, click **Connect a device**: dsync searches
 network for it (this works even when the firewall blocks discovery broadcasts, as long as
 TCP 47101 is open), or you can type its address. This computer's addresses are listed at
 the bottom of that window; click one to copy it.
+
+There is no size limit on files; they stream from disk, and the receiving computer checks
+it has enough free space before a transfer starts. Text longer than 1 MB is sent as a
+`.txt` file automatically.
+
+Copy an image (a screenshot, or "Copy image" in a browser) or files, and press **Ctrl+V**
+in a conversation: a preview asks before sending. Pictures show inline in the chat;
+click one to open it.
 
 Interrupted transfers resume where they stopped: if the connection drops, the sender keeps
 retrying for a few minutes, and a failed file has a **Retry** button (or run the same

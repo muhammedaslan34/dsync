@@ -78,6 +78,10 @@ export function Self() {
   return window['go']['main']['App']['Self']();
 }
 
+export function SendPasted(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendPasted'](arg1, arg2, arg3);
+}
+
 export function SendPaths(arg1, arg2) {
   return window['go']['main']['App']['SendPaths'](arg1, arg2);
 }
