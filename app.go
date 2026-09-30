@@ -11,6 +11,7 @@ import (
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"dsync/internal/clip"
 	"dsync/internal/config"
 	"dsync/internal/discovery"
 	"dsync/internal/node"
@@ -40,6 +41,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.node.SetClipboard(clip.System())
 	runCtx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
 	go func() {
@@ -193,3 +195,7 @@ func (a *App) imageHandler() http.Handler {
 		http.ServeFile(w, r, path)
 	})
 }
+
+func (a *App) ClipboardStatus() node.ClipboardStatus { return a.node.ClipboardStatus() }
+
+func (a *App) SetClipboardSync(on bool) error { return a.node.SetClipboardSync(on) }

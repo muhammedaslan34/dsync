@@ -4,6 +4,7 @@
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
     PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
+    ClipboardStatus, SetClipboardSync,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -35,6 +36,7 @@
   let pairIn = $state([]) // incoming requests waiting for an answer
   let pasted = $state(null) // items waiting for confirmation: { peerId, items }
   let attachOpen = $state(false)
+  let clipStatus = $state({ enabled: false, available: false })
   let theme = $state(loadTheme())
 
   let messagesEl = $state()
@@ -77,8 +79,8 @@
   })
 
   onMount(async () => {
-    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn] = await Promise.all([
-      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(),
+    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn, clipStatus] = await Promise.all([
+      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(), ClipboardStatus(),
     ])
     localAddrs ??= []
     pairIn = (pairIn ?? []).map((r) => ({ ...r, kind: 'in' }))
@@ -97,6 +99,9 @@
     })
     EventsOn('progress', (p) => { progress[p.id] = p })
     EventsOn('error', (e) => { serviceError = e })
+    EventsOn('clipboard', (c) => {
+      showToast(c.kind === 'image' ? `Image copied from ${c.peerName}` : `Clipboard from ${c.peerName}`, 'clip')
+    })
     EventsOn('pair:request', (r) => { pairIn = [...pairIn, { ...r, kind: 'in' }] })
     EventsOn('pair:closed', (id) => { pairIn = pairIn.filter((r) => r.id !== id) })
     EventsOn('pair:result', (r) => {
@@ -550,6 +555,11 @@
     {localAddrs}
     {theme}
     {fingerprint}
+    {clipStatus}
+    onClipboard={(on) => run(async () => {
+      await SetClipboardSync(on)
+      clipStatus = await ClipboardStatus()
+    })}
     pairedCount={peers.filter((p) => p.paired).length}
     onClose={() => (dialog = null)}
     onRename={rename}
@@ -587,7 +597,7 @@
 {#if toast}
   {#key toast.id}
     <div class="toast" class:error={toast.kind === 'error'} role="status">
-      <Icon name={toast.kind === 'error' ? 'alert' : 'check'} size={16} />
+      <Icon name={toast.kind === 'error' ? 'alert' : toast.kind === 'clip' ? 'clipboard' : 'check'} size={16} />
       <span>{toast.text}</span>
     </div>
   {/key}

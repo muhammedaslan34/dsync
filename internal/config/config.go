@@ -24,6 +24,8 @@ type Config struct {
 	ManualPeers []string `json:"manual_peers,omitempty"`
 	// DownloadDir is where received files go; empty means ~/Downloads/dsync.
 	DownloadDir string `json:"download_dir,omitempty"`
+	// ClipboardSync shares the clipboard with paired devices.
+	ClipboardSync bool `json:"clipboard_sync,omitempty"`
 	// Trusted are the paired devices. Only they may send us data.
 	Trusted []TrustedPeer `json:"trusted,omitempty"`
 

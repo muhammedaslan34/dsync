@@ -100,3 +100,12 @@ type PairResponse struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
+
+// ClipboardData is clipboard content synced to another device
+// (POST /api/v1/clipboard).
+type ClipboardData struct {
+	Kind     string `json:"kind"` // "text" or "image"
+	Text     string `json:"text,omitempty"`
+	Image    []byte `json:"image,omitempty"` // PNG
+	FromName string `json:"from_name,omitempty"`
+}

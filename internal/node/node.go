@@ -83,6 +83,8 @@ type Node struct {
 	parts     map[string]*partClaim         // partial files being written, by path
 	// folderReps are progress callbacks of incoming folders, by message id.
 	folderReps map[int64]func(int64)
+
+	clip clipState
 }
 
 // New loads (or creates) this device's identity and history.
@@ -145,6 +147,7 @@ func (n *Node) Run(ctx context.Context) error {
 	go n.scanLoop(ctx)
 	go n.cleanParts()
 	go n.cleanOutbox()
+	go n.clipLoop(ctx)
 
 	var runErr error
 	select {

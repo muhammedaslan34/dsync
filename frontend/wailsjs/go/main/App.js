@@ -22,6 +22,10 @@ export function ChooseReceiveDir() {
   return window['go']['main']['App']['ChooseReceiveDir']();
 }
 
+export function ClipboardStatus() {
+  return window['go']['main']['App']['ClipboardStatus']();
+}
+
 export function FindOnNetwork() {
   return window['go']['main']['App']['FindOnNetwork']();
 }
@@ -92,6 +96,10 @@ export function SendPaths(arg1, arg2) {
 
 export function SendText(arg1, arg2) {
   return window['go']['main']['App']['SendText'](arg1, arg2);
+}
+
+export function SetClipboardSync(arg1) {
+  return window['go']['main']['App']['SetClipboardSync'](arg1);
 }
 
 export function SetName(arg1) {

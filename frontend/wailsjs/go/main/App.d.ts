@@ -14,6 +14,8 @@ export function CancelTransfer(arg1:number):Promise<void>;
 
 export function ChooseReceiveDir():Promise<string>;
 
+export function ClipboardStatus():Promise<node.ClipboardStatus>;
+
 export function FindOnNetwork():Promise<Array<node.Peer>>;
 
 export function Fingerprint():Promise<string>;
@@ -49,6 +51,8 @@ export function SendPasted(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function SendPaths(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function SendText(arg1:string,arg2:string):Promise<void>;
+
+export function SetClipboardSync(arg1:boolean):Promise<void>;
 
 export function SetName(arg1:string):Promise<void>;
 

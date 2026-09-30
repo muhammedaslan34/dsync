@@ -4,7 +4,7 @@
   import { osLabel } from './format.js'
 
   let {
-    self, receiveDir, localAddrs, theme, fingerprint, pairedCount,
+    self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -55,6 +55,25 @@
           <p class="muted small">No network connection.</p>
         {/each}
       </div>
+    </section>
+
+    <section class="setting">
+      <div class="setting-title">Clipboard</div>
+      <label class="switch-row" class:disabled={!clipStatus.available}>
+        <span class="switch-text">
+          <span>Sync clipboard with paired devices</span>
+          <span class="muted small">
+            {#if clipStatus.available}
+              Copy on one computer, paste on another. Needs this on both. Passwords copied from
+              password managers are never sent.
+            {:else}
+              Not available here: {clipStatus.error}
+            {/if}
+          </span>
+        </span>
+        <input type="checkbox" class="switch" role="switch" checked={clipStatus.enabled}
+          disabled={!clipStatus.available} onchange={(e) => onClipboard(e.currentTarget.checked)} />
+      </label>
     </section>
 
     <section class="setting">

@@ -187,3 +187,9 @@ func withDefaultTimeout(ctx context.Context, d time.Duration) (context.Context, 
 	}
 	return context.WithTimeout(ctx, d)
 }
+
+// SendClipboard puts content on the paired device's clipboard, if it has
+// clipboard sync on.
+func (c *Client) SendClipboard(ctx context.Context, addr, fp string, d proto.ClipboardData) error {
+	return c.postJSON(ctx, addr, fp, "/api/v1/clipboard", d, nil, http.StatusNoContent)
+}

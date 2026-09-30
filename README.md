@@ -16,6 +16,7 @@ wails build                           # Linux app  -> build/bin/dsync-gui
 wails build -platform windows/amd64   # Windows app -> build/bin/dsync-gui.exe (built from Linux)
 wails dev                             # run with live reload while editing the UI
 go test -tags webkit2_41 ./...        # tests
+DSYNC_REAL_CLIPBOARD=1 go test ./internal/clip   # also test the real clipboard (overwrites it)
 ```
 
 The optional command-line tool (for scripts) builds with plain Go:
@@ -66,6 +67,13 @@ Copy an image (a screenshot, or "Copy image" in a browser) or files, and press *
 in a conversation: a preview asks before sending. Pictures show inline in the chat;
 click one to open it.
 
+**Clipboard sync:** turn on *Sync clipboard with paired devices* in Settings on both
+computers, and text or images you copy on one can be pasted on the other a moment later.
+It only goes to paired devices that are online and have it switched on, it isn't kept in
+the chat history, and anything a password manager marks as secret (KeePassXC, KDE, and the
+standard Windows flag) is never sent. On GNOME/Wayland it works through XWayland, which
+is there by default.
+
 Interrupted transfers resume where they stopped: if the connection drops, the sender keeps
 retrying for a few minutes, and a failed file has a **Retry** button (or run the same
 `dsync send` again); for a folder, files that already arrived are skipped. The receiver keeps partial files as hidden `.dsync-*.part` files in
@@ -112,4 +120,5 @@ command line, use `dsync pair --to NAME`.)
 2. ✅ File transfer (streaming, progress, checksum, cancel)
 3. ✅ Pairing + TLS 1.3
 4. ✅ Resume, paste to send, folders
-5. `dsync control` (launch Moonlight), tray GUI, Tailscale
+5. ✅ Clipboard sync
+6. `dsync control` (launch Moonlight), tray icon
