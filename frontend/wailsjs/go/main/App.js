@@ -86,6 +86,10 @@ export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
 
+export function Language() {
+  return window['go']['main']['App']['Language']();
+}
+
 export function LocalAddrs() {
   return window['go']['main']['App']['LocalAddrs']();
 }
@@ -168,6 +172,10 @@ export function SetClipboardSync(arg1) {
 
 export function SetKeepInTray(arg1) {
   return window['go']['main']['App']['SetKeepInTray'](arg1);
+}
+
+export function SetLanguage(arg1) {
+  return window['go']['main']['App']['SetLanguage'](arg1);
 }
 
 export function SetName(arg1) {

@@ -25,8 +25,10 @@ type trayState struct {
 	hidden   bool // the window is hidden
 	unread   bool // something arrived while hidden
 	quitting bool
+	open     *systray.MenuItem
 	status   *systray.MenuItem
 	clip     *systray.MenuItem
+	quitItem *systray.MenuItem
 }
 
 func trayIcon(unread bool) []byte {
@@ -62,20 +64,20 @@ func (a *App) trayReady() {
 	systray.SetTooltip("dsync")
 	systray.SetOnTapped(a.showWindow)
 
-	open := systray.AddMenuItem("Open dsync", "Show the dsync window")
+	open := systray.AddMenuItem(a.tr("tray.open"), a.tr("tray.openTip"))
 	systray.AddSeparator()
 	status := systray.AddMenuItem("", "")
 	status.Disable()
 	cs := a.node.ClipboardStatus()
-	clip := systray.AddMenuItemCheckbox("Sync clipboard", "Share the clipboard with paired devices", cs.Enabled)
+	clip := systray.AddMenuItemCheckbox(a.tr("tray.clip"), a.tr("tray.clipTip"), cs.Enabled)
 	if !cs.Available {
 		clip.Disable()
 	}
 	systray.AddSeparator()
-	quit := systray.AddMenuItem("Quit dsync", "Stop dsync completely")
+	quit := systray.AddMenuItem(a.tr("tray.quit"), a.tr("tray.quitTip"))
 
 	a.tray.mu.Lock()
-	a.tray.running, a.tray.status, a.tray.clip = true, status, clip
+	a.tray.running, a.tray.open, a.tray.status, a.tray.clip, a.tray.quitItem = true, open, status, clip, quit
 	a.tray.mu.Unlock()
 	a.updateTray()
 
@@ -98,6 +100,22 @@ func (a *App) trayReady() {
 	}()
 }
 
+// relabelTray puts the menu in the current language, after it changed in
+// the settings.
+func (a *App) relabelTray() {
+	a.tray.mu.Lock()
+	if a.tray.running {
+		a.tray.open.SetTitle(a.tr("tray.open"))
+		a.tray.open.SetTooltip(a.tr("tray.openTip"))
+		a.tray.clip.SetTitle(a.tr("tray.clip"))
+		a.tray.clip.SetTooltip(a.tr("tray.clipTip"))
+		a.tray.quitItem.SetTitle(a.tr("tray.quit"))
+		a.tray.quitItem.SetTooltip(a.tr("tray.quitTip"))
+	}
+	a.tray.mu.Unlock()
+	a.updateTray()
+}
+
 // updateTray refreshes the icon and menu from the current state.
 func (a *App) updateTray() {
 	a.tray.mu.Lock()
@@ -105,14 +123,7 @@ func (a *App) updateTray() {
 	if !a.tray.running {
 		return
 	}
-	switch n := a.node.OnlinePaired(); n {
-	case 0:
-		a.tray.status.SetTitle("No paired devices online")
-	case 1:
-		a.tray.status.SetTitle("1 device online")
-	default:
-		a.tray.status.SetTitle(fmt.Sprintf("%d devices online", n))
-	}
+	a.tray.status.SetTitle(devicesOnline(a.language(), a.node.OnlinePaired()))
 	if a.node.ClipboardStatus().Enabled {
 		a.tray.clip.Check()
 	} else {
@@ -124,7 +135,7 @@ func (a *App) updateTray() {
 	systray.SetTitle("dsync")
 	tip := "dsync"
 	if a.tray.unread {
-		tip = "dsync: new messages"
+		tip = a.tr("tray.unread")
 	}
 	systray.SetTooltip(tip)
 }
@@ -165,7 +176,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	}
 	wruntime.WindowHide(ctx)
 	if a.node.FirstTrayHint() {
-		a.notify("dsync is still running", "It keeps receiving in the background. Open it from the tray icon, or quit it there.", "")
+		a.notify(a.tr("notify.running"), a.tr("notify.runningTx"), "")
 	}
 	return true
 }
@@ -187,11 +198,11 @@ func (a *App) onEvent(event string, data any) {
 		m := data.(node.Message)
 		if m.Incoming && m.File != nil && m.File.Status == node.StatusDone && a.windowHidden() {
 			a.markUnread()
-			what := "a file"
+			key := "notify.file"
 			if m.File.Folder {
-				what = "a folder"
+				key = "notify.folder"
 			}
-			a.notify(m.PeerName, fmt.Sprintf("Sent you %s: %s", what, m.File.Name), m.PeerID)
+			a.notify(m.PeerName, a.tr(key, m.File.Name), m.PeerID)
 		}
 	}
 }

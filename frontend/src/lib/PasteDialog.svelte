@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
   import { fmtSize, fileKind } from './format.js'
+  import { t } from './i18n.svelte.js'
 
   // items: [{ name, size, url? (image preview), file? (File), path? (local path) }]
   let { items, peerName, onSend, onCancel } = $props()
@@ -33,10 +34,10 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onCancel() }}>
-  <div class="dialog paste-dialog" role="dialog" aria-label="Send pasted items">
+  <div class="dialog paste-dialog" role="dialog" aria-label={t('paste.label')}>
     <header class="dialog-head">
-      <h2>Send to {peerName}?</h2>
-      <button class="icon-btn" title="Cancel" onclick={onCancel}><Icon name="x" /></button>
+      <h2>{t('paste.title', { name: peerName })}</h2>
+      <button class="icon-btn" title={t('common.cancel')} onclick={onCancel}><Icon name="x" /></button>
     </header>
 
     {#if items.length === 1 && items[0].url}
@@ -51,17 +52,17 @@
           {:else}
             <span class="file-card" data-kind={fileKind(it.name)}><span class="file-icon sm"><Icon name={fileKind(it.name)} size={16} /></span></span>
           {/if}
-          <span class="paste-name" title={it.name}>{it.name}</span>
+          <span class="paste-name" title={it.name}><bdi>{it.name}</bdi></span>
           {#if it.size != null}<span class="muted small">{fmtSize(it.size)}</span>{/if}
         </li>
       {/each}
     </ul>
 
     <div class="dialog-actions">
-      {#if items.length > 1 && total}<span class="muted small paste-total">{items.length} items · {fmtSize(total)}</span>{/if}
-      <button class="btn secondary" onclick={onCancel}>Cancel</button>
+      {#if items.length > 1 && total}<span class="muted small paste-total">{t('paste.items', { count: items.length })} · {fmtSize(total)}</span>{/if}
+      <button class="btn secondary" onclick={onCancel}>{t('common.cancel')}</button>
       <button class="btn primary" bind:this={sendBtn} disabled={sending} onclick={send}>
-        <Icon name="send" size={15} /> {sending ? 'Sending…' : 'Send'}
+        <Icon name="send" size={15} /> {sending ? t('common.sending') : t('common.send')}
       </button>
     </div>
   </div>

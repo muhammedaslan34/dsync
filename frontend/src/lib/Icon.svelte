@@ -37,8 +37,11 @@
     key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
     pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/>',
   }
+  // Icons that point along the reading direction, mirrored in right-to-left
+  // languages (see .ic.flip in style.css).
+  const directional = new Set(['send', 'open'])
 </script>
 
-<span class="ic" style="width:{size}px;height:{size}px">
+<span class="ic" class:flip={directional.has(name)} style="width:{size}px;height:{size}px">
   {@html `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? ''}</svg>`}
 </span>

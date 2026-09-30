@@ -34,9 +34,15 @@ const (
 
 // ControlState is one step of setting up remote control.
 type ControlState struct {
-	PeerID  string `json:"peerId"`
-	Step    string `json:"step"` // checking, starting, pairing, streaming, done, error, canceled
-	Message string `json:"message,omitempty"`
+	PeerID string `json:"peerId"`
+	Step   string `json:"step"` // checking, starting, pairing, streaming, done, error, canceled
+	// Code tells apart messages of the same step, so the window can show
+	// them in its own language: pair-auto, pair-manual and pair-retry while
+	// pairing; no-moonlight, no-sunshine, sunshine-start, sunshine-blocked,
+	// ask, configure, pair-unfinished and pair-timeout for errors.
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"` // in English
+	Detail  string `json:"detail,omitempty"`  // the underlying error, for codes that include one
 	PIN     string `json:"pin,omitempty"`
 	Hint    string `json:"hint,omitempty"` // how to fix an error, e.g. an install command
 }
@@ -391,7 +397,7 @@ func (n *Node) StartControl(ctx context.Context, peerID string, opts ControlOpti
 			var ce *controlError
 			st := ControlState{PeerID: peerID, Step: "error", Message: err.Error()}
 			if errors.As(err, &ce) {
-				st.Hint = ce.hint
+				st.Code, st.Detail, st.Hint = ce.code, ce.detail, ce.hint
 			}
 			n.emit(EventControl, st)
 		default:
@@ -411,11 +417,16 @@ func (n *Node) CancelControl(peerID string) {
 	}
 }
 
+// controlError is a remote control problem with a code the window
+// translates (see ControlState.Code) and, if there is one, a hint.
 type controlError struct {
-	msg, hint string
+	msg, hint    string
+	code, detail string
+	err          error // what went wrong underneath, if anything
 }
 
 func (e *controlError) Error() string { return e.msg }
+func (e *controlError) Unwrap() error { return e.err }
 
 // Hint says how to fix the problem, e.g. an install command.
 func (e *controlError) Hint() string { return e.hint }
@@ -424,7 +435,7 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts Contro
 	state("checking", "Checking Moonlight here and Sunshine on "+peer.Name+"…")
 	ml, ok := control.FindMoonlight()
 	if !ok {
-		return &controlError{"Moonlight isn't installed on this computer.", control.InstallHint("moonlight")}
+		return &controlError{msg: "Moonlight isn't installed on this computer.", hint: control.InstallHint("moonlight"), code: "no-moonlight"}
 	}
 	addr := n.peerAddr(peer)
 	host, _, err := net.SplitHostPort(addr)
@@ -434,20 +445,22 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts Contro
 
 	st, err := n.cl.ControlStatus(ctx, addr, fp)
 	if err != nil {
-		return fmt.Errorf("could not ask %s: %w", peer.Name, err)
+		return &controlError{msg: fmt.Sprintf("could not ask %s: %v", peer.Name, err), code: "ask", detail: err.Error(), err: err}
 	}
 	if !st.SunshineInstalled {
-		return &controlError{"Sunshine isn't installed on " + peer.Name + ".", sunshineHintFor(peer.OS)}
+		return &controlError{msg: "Sunshine isn't installed on " + peer.Name + ".", hint: sunshineHintFor(peer.OS), code: "no-sunshine"}
 	}
 	if !st.SunshineRunning {
 		state("starting", "Starting Sunshine on "+peer.Name+"…")
 		if st, err = n.cl.StartSunshine(ctx, addr, fp); err != nil {
-			return &controlError{"Could not start Sunshine on " + peer.Name + ": " + err.Error(), "Open Sunshine on " + peer.Name + " once by hand."}
+			return &controlError{msg: "Could not start Sunshine on " + peer.Name + ": " + err.Error(), hint: "Open Sunshine on " + peer.Name + " once by hand.",
+				code: "sunshine-start", detail: err.Error(), err: err}
 		}
 	}
 
 	if !control.SunshineReachable(host) {
-		return &controlError{"Sunshine is running on " + peer.Name + ", but this computer can't reach it: its firewall blocks Sunshine.", control.SunshineFirewallHint(peer.OS)}
+		return &controlError{msg: "Sunshine is running on " + peer.Name + ", but this computer can't reach it: its firewall blocks Sunshine.",
+			hint: control.SunshineFirewallHint(peer.OS), code: "sunshine-blocked"}
 	}
 
 	// A smaller stream only makes things bigger if the host switches to
@@ -470,7 +483,7 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts Contro
 	if st.Configurable && (screen != st.Screen || match != st.MatchResolution) {
 		state("configuring", "Setting up the screen on "+peer.Name+"…")
 		if _, err := n.cl.ControlConfigure(ctx, addr, fp, proto.ControlConfigure{Screen: screen, MatchResolution: match}); err != nil {
-			return fmt.Errorf("could not change Sunshine's settings on %s: %w", peer.Name, err)
+			return &controlError{msg: fmt.Sprintf("could not change Sunshine's settings on %s: %v", peer.Name, err), code: "configure", detail: err.Error(), err: err}
 		}
 		for i := 0; i < 40 && !control.SunshineReachable(host); i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -525,11 +538,11 @@ func (n *Node) adjustPointerWhile(step int, done <-chan struct{}) {
 // a Sunshine login saved), or showing it there otherwise.
 func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Peer, host, addr, fp string, auto bool) error {
 	pin := randomPIN()
-	msg := "Setting up remote control with " + peer.Name + " (only needed once)…"
+	code, msg := "pair-auto", "Setting up remote control with "+peer.Name+" (only needed once)…"
 	if !auto {
-		msg = "On " + peer.Name + ", enter this PIN in Sunshine. dsync shows it there too."
+		code, msg = "pair-manual", "On "+peer.Name+", enter this PIN in Sunshine. dsync shows it there too."
 	}
-	n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Message: msg, PIN: pin})
+	n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Code: code, Message: msg, PIN: pin})
 
 	cmd, err := ml.StartPair(host, pin)
 	if err != nil {
@@ -551,7 +564,7 @@ func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Pee
 	go func() {
 		res, err := n.cl.ControlPIN(ctx, addr, fp, proto.ControlPINRequest{PIN: pin, FromName: n.Self().Name})
 		if err == nil && !res.Auto && auto {
-			n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", PIN: pin,
+			n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Code: "pair-retry", Detail: res.Error, PIN: pin,
 				Message: "Sunshine on " + peer.Name + " didn't take the PIN automatically (" + res.Error + "). Enter it there by hand."})
 		}
 	}()
@@ -570,11 +583,11 @@ func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Pee
 		select {
 		case <-exited:
 			// Moonlight gave up (e.g. wrong PIN); one last check above failed.
-			return errors.New("pairing didn't finish; try again")
+			return &controlError{msg: "pairing didn't finish; try again", code: "pair-unfinished"}
 		default:
 		}
 	}
-	return errors.New("pairing timed out; try again")
+	return &controlError{msg: "pairing timed out; try again", code: "pair-timeout"}
 }
 
 func randomPIN() string {

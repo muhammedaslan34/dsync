@@ -532,6 +532,20 @@ func (n *Node) SetQuitOnClose(quit bool) error {
 	return n.cfg.Save()
 }
 
+// Language is the chosen language code, or "" to follow the system.
+func (n *Node) Language() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.cfg.Language
+}
+
+func (n *Node) SetLanguage(lang string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cfg.Language = lang
+	return n.cfg.Save()
+}
+
 // FirstTrayHint reports whether the "still running in the tray" notice
 // should be shown, and records that it has been.
 func (n *Node) FirstTrayHint() bool {

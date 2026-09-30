@@ -47,6 +47,8 @@ export function InstallProgram(arg1:string):Promise<void>;
 
 export function InstallUpdate():Promise<void>;
 
+export function Language():Promise<string>;
+
 export function LocalAddrs():Promise<Array<discovery.LocalAddr>>;
 
 export function MakeNetworkPrivate():Promise<void>;
@@ -88,6 +90,8 @@ export function SetAutostart(arg1:boolean):Promise<void>;
 export function SetClipboardSync(arg1:boolean):Promise<void>;
 
 export function SetKeepInTray(arg1:boolean):Promise<void>;
+
+export function SetLanguage(arg1:string):Promise<void>;
 
 export function SetName(arg1:string):Promise<void>;
 

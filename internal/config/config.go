@@ -27,6 +27,9 @@ type Config struct {
 	// QuitOnClose quits the app when its window is closed, instead of
 	// keeping it running in the tray.
 	QuitOnClose bool `json:"quit_on_close,omitempty"`
+	// Language is the language of the window, tray menu and notifications
+	// ("en", "ar", "tr", "fr"); empty follows the system.
+	Language string `json:"language,omitempty"`
 	// TrayHintShown records that the "still running in the tray" notice was
 	// shown, so it appears only once.
 	TrayHintShown bool `json:"tray_hint_shown,omitempty"`

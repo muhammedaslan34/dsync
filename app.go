@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -120,7 +121,7 @@ func (a *App) SendText(peerID, text string) error {
 
 // PickFiles opens a file dialog and sends the chosen files to a peer.
 func (a *App) PickFiles(peerID string) error {
-	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Send files"})
+	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{Title: a.tr("dialog.files")})
 	if err != nil || len(paths) == 0 {
 		return err
 	}
@@ -129,7 +130,7 @@ func (a *App) PickFiles(peerID string) error {
 
 // PickFolder opens a folder dialog and sends the chosen folder to a peer.
 func (a *App) PickFolder(peerID string) error {
-	dir, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Send folder"})
+	dir, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: a.tr("dialog.folder")})
 	if err != nil || dir == "" {
 		return err
 	}
@@ -151,7 +152,7 @@ func (a *App) ReceiveDir() string { return a.node.ReceiveDir() }
 // ChooseReceiveDir lets the user pick where received files are saved.
 func (a *App) ChooseReceiveDir() (string, error) {
 	dir, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{
-		Title:            "Save received files in",
+		Title:            a.tr("dialog.receive"),
 		DefaultDirectory: a.node.ReceiveDir(),
 	})
 	if err != nil || dir == "" {
@@ -318,6 +319,30 @@ func (a *App) AllowSunshineFirewall() error {
 // ClearHistory removes the messages with a device, or all messages if
 // peerID is empty. Received files stay on disk.
 func (a *App) ClearHistory(peerID string) error { return a.node.ClearHistory(peerID) }
+
+// Language is the language chosen in the settings ("en", "ar", "tr",
+// "fr"), or "system" to follow the system.
+func (a *App) Language() string {
+	if l := a.node.Language(); validLanguage(l) {
+		return l
+	}
+	return "system"
+}
+
+// SetLanguage saves the language ("system" or a language code). The tray
+// menu changes right away; the window switches by itself.
+func (a *App) SetLanguage(lang string) error {
+	if lang == "system" {
+		lang = ""
+	} else if !validLanguage(lang) {
+		return fmt.Errorf("unknown language %q", lang)
+	}
+	if err := a.node.SetLanguage(lang); err != nil {
+		return err
+	}
+	a.relabelTray()
+	return nil
+}
 
 // StartPhonePairing makes a QR code for pairing a phone.
 func (a *App) StartPhonePairing() node.PhonePairing { return a.node.StartPhonePairing() }

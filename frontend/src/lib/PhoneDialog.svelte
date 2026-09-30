@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import QRCode from 'qrcode'
   import Icon from './Icon.svelte'
+  import { t } from './i18n.svelte.js'
 
   // pairing: { url, expires } from StartPhonePairing.
   let { pairing, onRefresh, onClose, onCopy } = $props()
@@ -21,31 +22,31 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-  <div class="dialog phone-dialog" role="dialog" aria-label="Connect a phone">
+  <div class="dialog phone-dialog" role="dialog" aria-label={t('phone.title')}>
     <header class="dialog-head">
       <div>
-        <h2>Connect a phone</h2>
-        <p class="muted">Open the dsync app on your phone and scan this code. The phone must be on the same Wi-Fi.</p>
+        <h2>{t('phone.title')}</h2>
+        <p class="muted">{t('phone.text')}</p>
       </div>
-      <button class="icon-btn" title="Close" onclick={onClose}><Icon name="x" /></button>
+      <button class="icon-btn" title={t('common.close')} onclick={onClose}><Icon name="x" /></button>
     </header>
 
     <div class="qr" class:expired={left === 0}>
       {#if svg}{@html svg}{/if}
       {#if left === 0}
         <div class="qr-expired">
-          <b>This code expired</b>
-          <button class="btn primary sm" onclick={onRefresh}>New code</button>
+          <b>{t('phone.expired')}</b>
+          <button class="btn primary sm" onclick={onRefresh}>{t('phone.newCode')}</button>
         </div>
       {/if}
     </div>
     <p class="muted small qr-note">
-      {#if left > 0}Works once, for {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')} more.{/if}
-      Everything between the phone and this computer is encrypted with a key inside this code, so only scan it with your own phone.
+      {#if left > 0}{t('phone.worksFor', { time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` })}{/if}
+      {t('phone.encrypted')}
     </p>
     <div class="dialog-actions">
-      <button class="btn secondary" onclick={() => onCopy(pairing.url)}><Icon name="copy" size={14} /> Copy link</button>
-      <button class="btn primary" onclick={onClose}>Done</button>
+      <button class="btn secondary" onclick={() => onCopy(pairing.url)}><Icon name="copy" size={14} /> {t('phone.copyLink')}</button>
+      <button class="btn primary" onclick={onClose}>{t('common.done')}</button>
     </div>
   </div>
 </div>

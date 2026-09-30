@@ -1,15 +1,32 @@
+// Sizes and dates follow the window's language (see i18n.svelte.js).
+import { t, i18n, intlLocale, fmtNumber } from './i18n.svelte.js'
+
 export const osLabel = { windows: 'Windows', linux: 'Linux', darwin: 'macOS' }
 
+// ltr keeps a size such as "2.4 MB" in that order inside right-to-left
+// text (between left-to-right isolate and pop directional isolate).
+function ltr(s) {
+  return i18n.rtl ? String.fromCharCode(0x2066) + s + String.fromCharCode(0x2069) : s
+}
+
+function sizeText(n) {
+  const units = t('units.size')
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  return `${fmtNumber(n, i === 0 || n >= 10 ? 0 : 1)} ${units[i]}`
+}
+
 export function fmtSize(n) {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let i = -1
-  do { n /= 1024; i++ } while (n >= 1024 && i < units.length - 1)
-  return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`
+  return ltr(sizeText(n))
+}
+
+// fmtRate is a transfer speed in bytes per second.
+export function fmtRate(n) {
+  return ltr(t('units.rate').replace('{size}', sizeText(n)))
 }
 
 export function fmtTime(ms) {
-  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(ms).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' })
 }
 
 // Short time for the device list: "14:05" today, "Mon" this week, else "12 Sep".
@@ -17,16 +34,29 @@ export function fmtShort(ms) {
   const d = new Date(ms)
   const days = daysAgo(d)
   if (days === 0) return fmtTime(ms)
-  if (days < 7) return d.toLocaleDateString([], { weekday: 'short' })
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+  if (days < 7) return d.toLocaleDateString(intlLocale(), { weekday: 'short' })
+  return d.toLocaleDateString(intlLocale(), { day: 'numeric', month: 'short' })
 }
 
 export function dayLabel(ms) {
   const d = new Date(ms)
   const days = daysAgo(d)
-  if (days === 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })
+  if (days === 0) return t('time.today')
+  if (days === 1) return t('time.yesterday')
+  return d.toLocaleDateString(intlLocale(), { weekday: 'long', day: 'numeric', month: 'long' })
+}
+
+// fmtDuration is a remaining time such as "5 sec" or "3 min".
+export function fmtDuration(s) {
+  let value = s, unit = 'second', digits = 0
+  if (s >= 3600) { value = s / 3600; unit = 'hour'; digits = 1 } else if (s >= 60) { value = Math.round(s / 60); unit = 'minute' }
+  try {
+    return new Intl.NumberFormat(intlLocale(), {
+      style: 'unit', unit, unitDisplay: intlLocale().startsWith('ar') ? 'long' : 'short', maximumFractionDigits: digits,
+    }).format(value)
+  } catch {
+    return `${value} ${unit}`
+  }
 }
 
 function daysAgo(d) {

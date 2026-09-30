@@ -2,6 +2,7 @@
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import { osLabel } from './format.js'
+  import { t } from './i18n.svelte.js'
 
   // Outgoing: { kind: 'out', peerId, name, code, error }
   // Incoming: { kind: 'in', id, peerId, name, os, code }
@@ -9,42 +10,42 @@
 </script>
 
 <div class="overlay">
-  <div class="dialog pair-dialog" role="dialog" aria-label="Pair device">
+  <div class="dialog pair-dialog" role="dialog" aria-label={t('pair.label')}>
     <div class="pair-avatars">
       <Avatar name={pair.name} id={pair.peerId} size={52} />
       <span class="pair-link"><Icon name="lock" size={16} /></span>
     </div>
 
     {#if pair.kind === 'in'}
-      <h2>{pair.name} wants to pair</h2>
-      <p class="muted">{osLabel[pair.os] ?? pair.os} · Paired devices can send you messages and files.</p>
+      <h2>{t('pair.inTitle', { name: pair.name })}</h2>
+      <p class="muted">{osLabel[pair.os] ?? pair.os} · {t('pair.inText')}</p>
     {:else if pair.error}
-      <h2>Pairing didn't finish</h2>
+      <h2>{t('pair.failedTitle')}</h2>
       <p class="muted">{pair.error[0].toUpperCase() + pair.error.slice(1)}.</p>
     {:else}
-      <h2>Pairing with {pair.name}</h2>
-      <p class="muted">Accept on {pair.name} if it shows this same code.</p>
+      <h2>{t('pair.outTitle', { name: pair.name })}</h2>
+      <p class="muted">{t('pair.outText', { name: pair.name })}</p>
     {/if}
 
     {#if !pair.error}
-      <div class="pair-code" aria-label="Pairing code">{pair.code}</div>
+      <div class="pair-code" dir="ltr" aria-label={t('pair.code')}>{pair.code}</div>
     {/if}
 
     {#if pair.kind === 'in'}
-      <p class="pair-warn"><Icon name="shield" size={15} /> Only accept if {pair.name} shows exactly this code.</p>
+      <p class="pair-warn"><Icon name="shield" size={15} /> {t('pair.warn', { name: pair.name })}</p>
       <div class="dialog-actions">
-        <button class="btn secondary" onclick={() => onAnswer(false)}>Decline</button>
-        <button class="btn primary" onclick={() => onAnswer(true)}>Accept</button>
+        <button class="btn secondary" onclick={() => onAnswer(false)}>{t('pair.decline')}</button>
+        <button class="btn primary" onclick={() => onAnswer(true)}>{t('pair.accept')}</button>
       </div>
     {:else if pair.error}
       <div class="dialog-actions">
-        <button class="btn secondary" onclick={onCancel}>Close</button>
-        <button class="btn primary" onclick={onRetry}>Try again</button>
+        <button class="btn secondary" onclick={onCancel}>{t('common.close')}</button>
+        <button class="btn primary" onclick={onRetry}>{t('common.tryAgain')}</button>
       </div>
     {:else}
-      <p class="pair-wait muted small"><span class="spinner"></span> Waiting for {pair.name}…</p>
+      <p class="pair-wait muted small"><span class="spinner"></span> {t('pair.waiting', { name: pair.name })}</p>
       <div class="dialog-actions">
-        <button class="btn secondary" onclick={onCancel}>Cancel</button>
+        <button class="btn secondary" onclick={onCancel}>{t('common.cancel')}</button>
       </div>
     {/if}
   </div>

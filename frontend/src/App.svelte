@@ -7,7 +7,7 @@
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version, ControlInfo,
     FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
-    AllowSunshineFirewall, ClearHistory, StartPhonePairing,
+    AllowSunshineFirewall, ClearHistory, StartPhonePairing, Language, SetLanguage,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -22,6 +22,9 @@
   import PhoneDialog from './lib/PhoneDialog.svelte'
   import { pastedItems, pasteName, toBase64, baseName, MAX_PASTE_BYTES } from './lib/paste.js'
   import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
+  import { t, i18n, setLanguage, loadLanguage } from './lib/i18n.svelte.js'
+
+  loadLanguage()
 
   let self = $state({ id: '', name: '', os: '', port: 0 })
   let peers = $state([])
@@ -96,6 +99,7 @@
   })
 
   onMount(async () => {
+    Language().then(setLanguage).catch(() => {})
     ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn, clipStatus, bg] = await Promise.all([
       Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(), ClipboardStatus(), Background(),
     ])
@@ -127,7 +131,7 @@
     EventsOn('update:available', (u) => { updateInfo = u })
     EventsOn('phone:paired', (p) => {
       phonePairing = null
-      showToast(`${p.name} is connected`)
+      showToast(t('toast.phoneConnected', { name: p.name }))
       select(p.id)
     })
     EventsOn('history:cleared', (peerId) => {
@@ -139,14 +143,14 @@
     EventsOn('update:progress', (p) => { updateProgress = p })
     EventsOn('open-peer', (id) => { dialog = null; select(id) })
     EventsOn('clipboard', (c) => {
-      showToast(c.kind === 'image' ? `Image copied from ${c.peerName}` : `Clipboard from ${c.peerName}`, 'clip')
+      showToast(t(c.kind === 'image' ? 'toast.imageFrom' : 'toast.clipFrom', { name: c.peerName }), 'clip')
     })
     EventsOn('pair:request', (r) => { pairIn = [...pairIn, { ...r, kind: 'in' }] })
     EventsOn('pair:closed', (id) => { pairIn = pairIn.filter((r) => r.id !== id) })
     EventsOn('pair:result', (r) => {
       if (pairOut?.peerId !== r.peerId) return
       if (r.ok) {
-        showToast(`Paired with ${pairOut.name}`)
+        showToast(t('toast.paired', { name: pairOut.name }))
         pairOut = null
         tick().then(() => composerEl?.focus())
       } else if (r.error === 'canceled') {
@@ -175,21 +179,28 @@
   })
 
   function loadTheme() {
-    let t = 'system'
-    try { t = localStorage.getItem('theme') || 'system' } catch {}
-    applyTheme(t)
-    return t
+    let v = 'system'
+    try { v = localStorage.getItem('theme') || 'system' } catch {}
+    applyTheme(v)
+    return v
   }
 
-  function applyTheme(t) {
-    if (t === 'system') document.documentElement.removeAttribute('data-theme')
-    else document.documentElement.dataset.theme = t
+  function applyTheme(v) {
+    if (v === 'system') document.documentElement.removeAttribute('data-theme')
+    else document.documentElement.dataset.theme = v
   }
 
-  function setTheme(t) {
-    theme = t
-    applyTheme(t)
-    try { localStorage.setItem('theme', t) } catch {}
+  function setTheme(v) {
+    theme = v
+    applyTheme(v)
+    try { localStorage.setItem('theme', v) } catch {}
+  }
+
+  // chooseLanguage applies a language right away and saves it in the
+  // config, where the tray menu and notifications pick it up too.
+  function chooseLanguage(pref) {
+    setLanguage(pref)
+    run(() => SetLanguage(pref))
   }
 
   async function scrollToBottom() {
@@ -258,7 +269,7 @@
     await run(async () => {
       await SetName(name)
       self = await Self()
-      showToast('Device renamed')
+      showToast(t('toast.renamed'))
     })
   }
 
@@ -270,7 +281,7 @@
 
   async function copy(text) {
     await ClipboardSetText(text)
-    showToast('Copied to clipboard')
+    showToast(t('toast.copied'))
   }
 
   function openDialog(name) {
@@ -313,7 +324,7 @@
     dialog = null
     await run(async () => {
       await ClearHistory(peerId)
-      showToast(peerId ? 'Conversation cleared' : 'All conversations cleared')
+      showToast(t(peerId ? 'toast.convCleared' : 'toast.allCleared'))
     })
   }
 
@@ -321,7 +332,7 @@
     dialog = null
     await run(async () => {
       await Unpair(selected.id)
-      showToast(`Unpaired ${selected.name}`)
+      showToast(t('toast.unpaired', { name: selected.name }))
     })
   }
 
@@ -338,7 +349,7 @@
     }
     const tooBig = got.files.find((f) => f.size > MAX_PASTE_BYTES)
     if (tooBig) {
-      showToast(`${tooBig.name || 'That file'} is too big to paste. Drag it into the window instead.`, 'error')
+      showToast(t('toast.tooBig', { name: tooBig.name || t('toast.thatFile') }), 'error')
       return
     }
     pasted = {
@@ -444,7 +455,7 @@
   async function installProgram(name) {
     await run(async () => {
       await InstallProgram(name)
-      showToast(`${name === 'sunshine' ? 'Sunshine' : 'Moonlight'} is installed`)
+      showToast(t('toast.installed', { name: name === 'sunshine' ? 'Sunshine' : 'Moonlight' }))
     })
     hostInfo = await HostInfo()
   }
@@ -452,7 +463,7 @@
   function preview(m) {
     if (!m) return null
     const text = m.file ? (m.file.folder ? `📁 ${m.file.name}` : m.file.name) : m.text.split('\n')[0]
-    return (m.incoming ? '' : 'You: ') + text
+    return m.incoming ? text : t('sidebar.you', { text })
   }
 </script>
 
@@ -462,33 +473,33 @@
       <span class="logo"><Icon name="logo" size={18} stroke={2.4} /></span>
       <span class="brand-name">dsync</span>
       {#if updateInfo?.available}
-        <button class="update-pill" title="dsync {updateInfo.latest} is available" onclick={() => openDialog('settings')}>Update</button>
+        <button class="update-pill" title={t('sidebar.updateTitle', { version: updateInfo.latest })} onclick={() => openDialog('settings')}>{t('sidebar.update')}</button>
       {/if}
-      <button class="icon-btn" title="Settings" onclick={() => openDialog('settings')}><Icon name="settings" /></button>
+      <button class="icon-btn" title={t('common.settings')} onclick={() => openDialog('settings')}><Icon name="settings" /></button>
     </div>
 
-    <button class="me" title="Settings" onclick={() => openDialog('settings')}>
+    <button class="me" title={t('common.settings')} onclick={() => openDialog('settings')}>
       <Avatar name={self.name} id={self.id} size={36} online={!serviceError} />
       <span class="device-text">
         <span class="device-name">{self.name}</span>
-        <span class="muted small">{osLabel[self.os] ?? self.os}{primaryAddr ? ` · ${primaryAddr}` : ''}</span>
+        <span class="muted small"><bdi>{osLabel[self.os] ?? self.os}</bdi>{#if primaryAddr}{' · '}<bdi class="ltr">{primaryAddr}</bdi>{/if}</span>
       </span>
-      <span class="chip">This PC</span>
+      <span class="chip">{t('sidebar.thisPC')}</span>
     </button>
 
     {#if firewallProblem}
       <button class="fw-warning" onclick={() => openDialog('settings')}>
         <Icon name="shield" size={16} />
         <span>
-          <b>Windows Firewall is blocking dsync</b>
-          <span class="small">Other computers can't reach this PC. Click to fix.</span>
+          <b>{t('sidebar.fwTitle')}</b>
+          <span class="small">{t('sidebar.fwText')}</span>
         </span>
       </button>
     {/if}
 
     <div class="list-head">
-      <span class="label">Devices <span class="count">{devices.length}</span></span>
-      <button class="icon-btn sm" title="Scan again" onclick={refresh}>
+      <span class="label">{t('sidebar.devices')} <span class="count">{devices.length}</span></span>
+      <button class="icon-btn sm" title={t('sidebar.scan')} onclick={refresh}>
         <span class:spin={scanning}><Icon name="refresh" size={15} /></span>
       </button>
     </div>
@@ -501,15 +512,15 @@
             <Avatar name={d.name} id={d.id} size={38} online={d.online} />
             <span class="device-text">
               <span class="device-row">
-                <span class="device-name">{d.name}</span>
+                <span class="device-name"><bdi>{d.name}</bdi></span>
                 {#if last}<span class="time">{fmtShort(last.time)}</span>{/if}
               </span>
               <span class="device-row">
                 <span class="preview">
-                  {#if d.phone && !last}<span>{d.online ? 'Phone · online' : 'Phone'}</span>
-                  {:else if d.oneWay}<span class="one-way">Can't reach it</span>
-                  {:else if !d.paired && d.online}<span class="not-paired"><Icon name="lock" size={11} stroke={2.5} /> Not paired</span>
-                  {:else if last}{preview(last)}{:else}{d.online ? `Online · ${osLabel[d.os] ?? d.os}` : 'Offline'}{/if}
+                  {#if d.phone && !last}<span>{t(d.online ? 'sidebar.phoneOnline' : 'sidebar.phone')}</span>
+                  {:else if d.oneWay}<span class="one-way">{t('sidebar.cantReach')}</span>
+                  {:else if !d.paired && d.online}<span class="not-paired"><Icon name="lock" size={11} stroke={2.5} /> {t('sidebar.notPaired')}</span>
+                  {:else if last}<bdi>{preview(last)}</bdi>{:else}{d.online ? t('sidebar.onlineOs', { os: osLabel[d.os] ?? d.os }) : t('common.offline')}{/if}
                 </span>
                 {#if unread[d.id]}<span class="badge">{unread[d.id]}</span>{/if}
               </span>
@@ -519,57 +530,57 @@
       {:else}
         <li class="empty-list">
           <span class="pulse"><Icon name="wifi" size={20} /></span>
-          <p>Looking for devices…</p>
-          <p class="muted small">Open dsync on your other computer and it will show up here.</p>
+          <p>{t('sidebar.looking')}</p>
+          <p class="muted small">{t('sidebar.lookingHint')}</p>
         </li>
       {/each}
     </ul>
 
     <div class="sidebar-foot">
       <button class="btn primary block" onclick={() => openDialog('connect')}>
-        <Icon name="plus" size={16} /> Connect a device
+        <Icon name="plus" size={16} /> {t('sidebar.connect')}
       </button>
     </div>
   </aside>
 
   <main class="main" class:drop-target={!!selected?.paired}>
     {#if serviceError}
-      <div class="banner"><Icon name="alert" size={16} /> Background service stopped: {serviceError}</div>
+      <div class="banner"><Icon name="alert" size={16} /> {t('thread.serviceStopped', { error: serviceError })}</div>
     {/if}
 
     {#if selected}
       <header class="thread-head">
         <Avatar name={selected.name} id={selected.id} size={40} online={selected.online} />
         <div class="device-text">
-          <div class="thread-name">{selected.name}</div>
+          <div class="thread-name"><bdi>{selected.name}</bdi></div>
           <div class="muted small">
             {#if selected.online}
-              <span class="online-text">Online</span> · {osLabel[selected.os] ?? selected.os}{selected.addr ? ` · ${selected.addr}` : ''}
-              {#if selected.paired}<span class="secure" title="Paired · end-to-end encrypted (TLS 1.3)"> · <Icon name="lock" size={11} stroke={2.5} /> Encrypted</span>{/if}
+              <span class="online-text">{t('common.online')}</span> · <bdi>{osLabel[selected.os] ?? selected.os}</bdi>{#if selected.addr}{' · '}<bdi class="ltr">{selected.addr}</bdi>{/if}
+              {#if selected.paired}<span class="secure" title={t('thread.encryptedTitle')}> · <Icon name="lock" size={11} stroke={2.5} /> {t('thread.encrypted')}</span>{/if}
             {:else}
-              Offline
+              {t('common.offline')}
             {/if}
           </div>
         </div>
         <div class="head-actions">
           {#if selected.paired}
-            <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
+            <button class="icon-btn" title={t('thread.sendFiles')} onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
             {#if !selected.phone}
-              <button class="icon-btn" title="Send a folder" onclick={() => run(() => PickFolder(selected.id))}><Icon name="folderUp" /></button>
+              <button class="icon-btn" title={t('thread.sendFolder')} onclick={() => run(() => PickFolder(selected.id))}><Icon name="folderUp" /></button>
             {/if}
           {/if}
           {#if selected.paired && selected.online && !selected.phone}
-            <button class="icon-btn" title="Control this computer" onclick={() => startControl(selected)}><Icon name="monitor" /></button>
+            <button class="icon-btn" title={t('thread.control')} onclick={() => startControl(selected)}><Icon name="monitor" /></button>
           {/if}
           {#if messages.some((m) => m.peerId === selected.id)}
-            <button class="icon-btn" title="Clear this conversation" onclick={() => (dialog = 'clear')}><Icon name="eraser" /></button>
+            <button class="icon-btn" title={t('thread.clear')} onclick={() => (dialog = 'clear')}><Icon name="eraser" /></button>
           {/if}
-          <button class="icon-btn" title="Open received files folder" onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
+          <button class="icon-btn" title={t('thread.openFolder')} onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
           {#if selected.paired}
-            <button class="icon-btn danger" title="Unpair" onclick={() => (dialog = 'unpair')}><Icon name="unlink" /></button>
+            <button class="icon-btn danger" title={t('thread.unpair')} onclick={() => (dialog = 'unpair')}><Icon name="unlink" /></button>
           {/if}
           {#if selected.manual}
-            <button class="icon-btn danger" title="Forget this device" onclick={forget}><Icon name="trash" /></button>
+            <button class="icon-btn danger" title={t('thread.forget')} onclick={forget}><Icon name="trash" /></button>
           {/if}
         </div>
       </header>
@@ -596,10 +607,10 @@
                 </div>
               {:else}
                 <div class="bubble">
-                  <pre>{m.text}</pre>
+                  <pre dir="auto">{m.text}</pre>
                   <span class="stamp">{fmtTime(m.time)}</span>
                 </div>
-                <button class="copy-btn" title="Copy" onclick={() => copy(m.text)}><Icon name="copy" size={14} /></button>
+                <button class="copy-btn" title={t('common.copy')} onclick={() => copy(m.text)}><Icon name="copy" size={14} /></button>
               {/if}
             </div>
           {/if}
@@ -607,11 +618,11 @@
           <div class="thread-empty">
             <Avatar name={selected.name} id={selected.id} size={64} />
             {#if selected.paired}
-              <h3>Start sending to {selected.name}</h3>
-              <p class="muted">Type a message or command below, drag files anywhere in this window, or paste a copied image.</p>
+              <h3>{t('thread.emptyTitle', { name: selected.name })}</h3>
+              <p class="muted">{t('thread.emptyText')}</p>
             {:else}
-              <h3>{selected.name} isn't paired yet</h3>
-              <p class="muted">Pair once to send messages and files. Everything between paired devices is encrypted.</p>
+              <h3>{t('thread.unpairedTitle', { name: selected.name })}</h3>
+              <p class="muted">{t('thread.unpairedText')}</p>
             {/if}
           </div>
         {/each}
@@ -621,28 +632,28 @@
         <div class="pair-bar">
           <span class="pair-bar-icon"><Icon name="lock" size={18} /></span>
           <div class="device-text">
-            <b>Pair with {selected.name}</b>
-            <span class="muted small">You'll confirm a 6-digit code on both computers.</span>
+            <b>{t('thread.pairTitle', { name: selected.name })}</b>
+            <span class="muted small">{t('thread.pairText')}</span>
           </div>
           <button class="btn primary" disabled={!selected.online} onclick={() => startPair(selected)}>
-            {selected.online ? 'Pair' : 'Offline'}
+            {selected.online ? t('thread.pair') : t('common.offline')}
           </button>
         </div>
       {:else}
       {#if selected.oneWay}
         <div class="offline-note one-way-note">
           <Icon name="alert" size={14} />
-          <span>{selected.name} can send to this computer, but this computer can't reach it. Its firewall is probably blocking dsync.
-            {#if selected.os === 'windows'}On {selected.name}, update dsync or open its Settings → Windows Firewall and click the fix buttons.{:else}On {selected.name}, allow dsync through its firewall (<code>sudo ufw allow dsync</code>).{/if}</span>
+          <span>{t('thread.oneWay', { name: selected.name })}
+            {#if selected.os === 'windows'}{t('thread.oneWayWindows', { name: selected.name })}{:else}{t('thread.oneWayOther', { name: selected.name })} <code dir="ltr">sudo ufw allow dsync</code>{/if}</span>
         </div>
       {:else if !selected.online}
-        <div class="offline-note"><Icon name="alert" size={14} /> {selected.name} is offline. Messages will fail until it's back.</div>
+        <div class="offline-note"><Icon name="alert" size={14} /> {t('thread.offline', { name: selected.name })}</div>
       {/if}
 
       <form class="composer" onsubmit={(e) => { e.preventDefault(); send() }}>
         <div class="composer-box">
           <div class="attach">
-            <button type="button" class="icon-btn" title="Send files or a folder" aria-haspopup="menu" aria-expanded={attachOpen}
+            <button type="button" class="icon-btn" title={t('thread.attach')} aria-haspopup="menu" aria-expanded={attachOpen}
               onclick={() => (attachOpen = !attachOpen)}>
               <Icon name="paperclip" />
             </button>
@@ -651,10 +662,10 @@
               <div class="menu-backdrop" role="presentation" onclick={() => (attachOpen = false)}></div>
               <div class="menu" role="menu">
                 <button type="button" role="menuitem" onclick={() => { attachOpen = false; run(() => PickFiles(selected.id)) }}>
-                  <Icon name="file" size={16} /> Files…
+                  <Icon name="file" size={16} /> {t('thread.files')}
                 </button>
                 <button type="button" role="menuitem" onclick={() => { attachOpen = false; run(() => PickFolder(selected.id)) }}>
-                  <Icon name="folder" size={16} /> Folder…
+                  <Icon name="folder" size={16} /> {t('thread.folder')}
                 </button>
               </div>
             {/if}
@@ -665,28 +676,29 @@
             oninput={autosize}
             onkeydown={onComposerKey}
             rows="1"
-            placeholder="Message {selected.name}"
+            dir={draft ? 'auto' : null}
+            placeholder={t('thread.placeholder', { name: selected.name })}
           ></textarea>
-          <button class="send-btn" type="submit" title="Send (Enter)" disabled={sending || !draft.trim()}>
+          <button class="send-btn" type="submit" title={t('thread.sendTitle')} disabled={sending || !draft.trim()}>
             <Icon name="send" size={17} />
           </button>
         </div>
-        <div class="composer-hint">Enter to send · Shift+Enter for a new line · Drop or paste files and images to send them</div>
+        <div class="composer-hint">{t('thread.hint')}</div>
       </form>
       {/if}
     {:else}
       <div class="welcome">
         <span class="logo big"><Icon name="logo" size={34} stroke={2.2} /></span>
-        <h1>Welcome to dsync</h1>
-        <p class="muted">Send text, commands and files between your computers.</p>
+        <h1>{t('welcome.title')}</h1>
+        <p class="muted">{t('welcome.lead')}</p>
         <ol class="steps">
-          <li><span class="step-n">1</span><div><b>Open dsync on your other computer</b><span class="muted">Both need to be on the same network, or on Tailscale.</span></div></li>
-          <li><span class="step-n">2</span><div><b>Allow it through the firewall</b><span class="muted">UDP 47100 and TCP 47101, on private networks.</span></div></li>
-          <li><span class="step-n">3</span><div><b>Pick it on the left</b><span class="muted">It appears automatically, or use Connect a device.</span></div></li>
+          <li><span class="step-n">1</span><div><b>{t('welcome.step1')}</b><span class="muted">{t('welcome.step1Text')}</span></div></li>
+          <li><span class="step-n">2</span><div><b>{t('welcome.step2')}</b><span class="muted">{t('welcome.step2Text')}</span></div></li>
+          <li><span class="step-n">3</span><div><b>{t('welcome.step3')}</b><span class="muted">{t('welcome.step3Text')}</span></div></li>
         </ol>
-        <button class="btn primary" onclick={() => openDialog('connect')}><Icon name="plus" size={16} /> Connect a device</button>
+        <button class="btn primary" onclick={() => openDialog('connect')}><Icon name="plus" size={16} /> {t('sidebar.connect')}</button>
         {#if primaryAddr}
-          <p class="muted small">This computer's address: <button class="text-btn mono" onclick={() => copy(primaryAddr)}>{primaryAddr}</button></p>
+          <p class="muted small">{t('welcome.address')} <button class="text-btn mono" dir="ltr" onclick={() => copy(primaryAddr)}>{primaryAddr}</button></p>
         {/if}
       </div>
     {/if}
@@ -695,7 +707,7 @@
       <div class="drop-hint">
         <div class="drop-card">
           <Icon name="upload" size={36} />
-          <b>Drop to send to {selected.name}</b>
+          <b>{t('thread.drop', { name: selected.name })}</b>
         </div>
       </div>
     {/if}
@@ -721,6 +733,8 @@
     {receiveDir}
     {localAddrs}
     {theme}
+    language={i18n.pref}
+    onLanguage={chooseLanguage}
     {fingerprint}
     {clipStatus}
     {bg}
@@ -735,7 +749,7 @@
     onAllowSunshine={() => run(async () => {
       await AllowSunshineFirewall()
       hostInfo = await HostInfo()
-      showToast('Other computers can now reach Sunshine here')
+      showToast(t('toast.sunshineReachable'))
     })}
     onSunshineSetup={() => run(async () => {
       await OpenSunshineSetup()
@@ -744,12 +758,12 @@
     onClearAll={() => (dialog = 'clear-all')}
     onConnectPhone={connectPhone}
     phones={peers.filter((p) => p.phone)}
-    onFixFirewall={() => fixFirewall(FixFirewall, 'dsync is now allowed through Windows Firewall')}
-    onMakePrivate={() => fixFirewall(MakeNetworkPrivate, 'Your network is now set to Private')}
+    onFixFirewall={() => fixFirewall(FixFirewall, t('toast.fwFixed'))}
+    onMakePrivate={() => fixFirewall(MakeNetworkPrivate, t('toast.networkPrivate'))}
     onSunshineLogin={async (user, pw) => {
       await SetSunshineLogin(user, pw)
       hostInfo = await HostInfo()
-      showToast(user ? 'Sunshine login saved' : 'Sunshine login removed')
+      showToast(t(user ? 'toast.loginSaved' : 'toast.loginRemoved'))
     }}
     onOpenURL={OpenURL}
     onBackground={(setter, on) => run(async () => {
@@ -774,15 +788,15 @@
 {#if (dialog === 'clear' && selected) || dialog === 'clear-all'}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) dialog = null }}>
-    <div class="dialog confirm" role="dialog" aria-label="Clear history">
-      <h2>{dialog === 'clear' ? `Clear the conversation with ${selected.name}?` : 'Clear all conversations?'}</h2>
+    <div class="dialog confirm" role="dialog" aria-label={t('confirm.clearLabel')}>
+      <h2>{dialog === 'clear' ? t('confirm.clearOne', { name: selected.name }) : t('confirm.clearAll')}</h2>
       <p class="muted">
-        {dialog === 'clear' ? 'Messages and the file list with this device are removed from this computer.' : 'All messages and file lists are removed from this computer.'}
-        Received files stay in your Downloads folder, and the other computer keeps its copy.
+        {t(dialog === 'clear' ? 'confirm.clearOneText' : 'confirm.clearAllText')}
+        {t('confirm.clearKeep')}
       </p>
       <div class="dialog-actions">
-        <button class="btn secondary" onclick={() => (dialog = null)}>Cancel</button>
-        <button class="btn danger" onclick={() => clearHistory(dialog === 'clear' ? selected.id : '')}>Clear</button>
+        <button class="btn secondary" onclick={() => (dialog = null)}>{t('common.cancel')}</button>
+        <button class="btn danger" onclick={() => clearHistory(dialog === 'clear' ? selected.id : '')}>{t('common.clear')}</button>
       </div>
     </div>
   </div>
@@ -791,12 +805,12 @@
 {#if dialog === 'unpair' && selected}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) dialog = null }}>
-    <div class="dialog confirm" role="dialog" aria-label="Unpair">
-      <h2>Unpair {selected.name}?</h2>
-      <p class="muted">Neither computer will accept messages or files from the other until you pair again.</p>
+    <div class="dialog confirm" role="dialog" aria-label={t('thread.unpair')}>
+      <h2>{t('confirm.unpairTitle', { name: selected.name })}</h2>
+      <p class="muted">{t('confirm.unpairText')}</p>
       <div class="dialog-actions">
-        <button class="btn secondary" onclick={() => (dialog = null)}>Cancel</button>
-        <button class="btn danger" onclick={unpair}>Unpair</button>
+        <button class="btn secondary" onclick={() => (dialog = null)}>{t('common.cancel')}</button>
+        <button class="btn danger" onclick={unpair}>{t('thread.unpair')}</button>
       </div>
     </div>
   </div>
