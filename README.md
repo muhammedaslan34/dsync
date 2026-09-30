@@ -4,7 +4,7 @@ Send text, files and whole folders of any size between your computers and your p
 share the clipboard, and control another computer's screen. Windows, macOS, Linux, Android
 and iPhone, straight across your own network and encrypted end to end.
 
-**Website and downloads: https://muhammedaslan34.github.io/dsync-site/**
+**Website and downloads: https://dsync.pixeloud.com**
 (source: [dsync-site](https://github.com/muhammedaslan34/dsync-site))
 
 ![dsync on Linux, talking with a Windows PC](docs/screenshots/desktop-chat.png)
