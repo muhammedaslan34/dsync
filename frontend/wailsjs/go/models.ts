@@ -147,6 +147,7 @@ export namespace node {
 	    sunshineRunning: boolean;
 	    sunshineHint?: string;
 	    sunshineLogin: boolean;
+	    sunshineBlocked: boolean;
 	    sunshineUrl: string;
 	
 	    static createFrom(source: any = {}) {
@@ -161,6 +162,7 @@ export namespace node {
 	        this.sunshineRunning = source["sunshineRunning"];
 	        this.sunshineHint = source["sunshineHint"];
 	        this.sunshineLogin = source["sunshineLogin"];
+	        this.sunshineBlocked = source["sunshineBlocked"];
 	        this.sunshineUrl = source["sunshineUrl"];
 	    }
 	}

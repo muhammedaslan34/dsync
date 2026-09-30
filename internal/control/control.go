@@ -71,7 +71,9 @@ func (m Moonlight) command(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 // Paired reports whether Moonlight is paired with host, by listing its
-// apps, which only works once paired.
+// apps, which only works once paired. Call it after checking that host's
+// Sunshine is reachable (SunshineReachable): Moonlight on Windows exits
+// without saying why, so any other failure is taken as "not paired yet".
 func (m Moonlight) Paired(ctx context.Context, host string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -79,14 +81,34 @@ func (m Moonlight) Paired(ctx context.Context, host string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	msg := string(out)
-	switch {
-	case strings.Contains(msg, "has not been paired"):
-		return false, nil
-	case strings.Contains(msg, "Failed to connect"):
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if strings.Contains(string(out), "Failed to connect") {
 		return false, fmt.Errorf("moonlight could not reach %s; is Sunshine running there?", host)
 	}
-	return false, fmt.Errorf("moonlight list: %v: %s", err, strings.TrimSpace(msg))
+	return false, nil
+}
+
+// SunshineReachable reports whether host's Sunshine accepts connections
+// from here, i.e. it runs and its firewall lets Moonlight in. It is a
+// variable so tests can fake it.
+var SunshineReachable = func(host string) bool {
+	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(SunshinePort)), 3*time.Second)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+// SunshineFirewallHint says how to let Moonlight reach Sunshine on a
+// computer running os.
+func SunshineFirewallHint(os string) string {
+	if strings.EqualFold(os, "windows") {
+		return "On that PC, allow Sunshine in Windows Firewall (its installer normally does), and make sure the network is set to Private: dsync → Settings → Windows Firewall."
+	}
+	return "On that computer: dsync → Settings → Remote control → Allow through firewall, or run: sudo ufw allow proto tcp to any port 47984,47989,48010 && sudo ufw allow proto udp to any port 47998:48000,48002,48010"
 }
 
 // StartPair starts pairing with host using pin, which must then be entered

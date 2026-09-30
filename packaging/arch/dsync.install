@@ -1,6 +1,8 @@
 post_install() {
   echo "==> Other computers reach dsync on UDP 47100 and TCP 47101. To allow that:"
   echo "      sudo ufw allow dsync"
+  echo "    To let them control this computer too (with Sunshine installed):"
+  echo "      sudo ufw allow dsync-remote-control"
   echo "    or, with firewalld:"
   echo "      sudo firewall-cmd --permanent --add-service=dsync && sudo firewall-cmd --reload"
 }

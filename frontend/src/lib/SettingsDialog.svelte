@@ -7,7 +7,7 @@
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
     firewall, onFixFirewall, onMakePrivate,
-    updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram, onSunshineSetup,
+    updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram, onSunshineSetup, onAllowSunshine,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -208,6 +208,11 @@
               {installing === 'sunshine' ? 'Installing…' : 'Install Sunshine'}
             </button>
             <span class="muted small">Then set its username and password once.</span>
+          </div>
+        {:else if hostInfo.sunshineBlocked}
+          <div class="rc-install">
+            <button class="btn primary sm" onclick={onAllowSunshine}>Allow through firewall</button>
+            <span class="muted small">This computer's firewall stops other computers from controlling it.</span>
           </div>
         {:else if !hostInfo.sunshineLogin}
           <div class="rc-install">

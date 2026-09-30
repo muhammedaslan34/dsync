@@ -57,7 +57,10 @@ type HostInfo struct {
 	SunshineRunning   bool   `json:"sunshineRunning"`
 	SunshineHint      string `json:"sunshineHint,omitempty"`
 	SunshineLogin     bool   `json:"sunshineLogin"` // a login is saved
-	SunshineURL       string `json:"sunshineUrl"`
+	// SunshineBlocked means this computer's firewall (ufw) keeps other
+	// computers from reaching Sunshine.
+	SunshineBlocked bool   `json:"sunshineBlocked"`
+	SunshineURL     string `json:"sunshineUrl"`
 }
 
 func (n *Node) sunshineAPI() (control.SunshineAPI, bool) {
@@ -77,6 +80,7 @@ func (n *Node) HostInfo() HostInfo {
 		SunshineInstalled: sun,
 		SunshineRunning:   control.SunshineRunning(),
 		SunshineLogin:     login,
+		SunshineBlocked:   sun && control.SunshineFirewallBlocked(),
 		SunshineURL:       fmt.Sprintf("https://localhost:%d", control.SunshineWebPort),
 	}
 	if !ml {
@@ -287,6 +291,9 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, state func(
 		}
 	}
 
+	if !control.SunshineReachable(host) {
+		return &controlError{"Sunshine is running on " + peer.Name + ", but this computer can't reach it: its firewall blocks Sunshine.", control.SunshineFirewallHint(peer.OS)}
+	}
 	pairedML, err := ml.Paired(ctx, host)
 	if err != nil {
 		return err

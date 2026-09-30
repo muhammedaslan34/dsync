@@ -59,10 +59,11 @@ exit 0
 		}
 	}
 	t.Setenv("PATH", f.dir+string(os.PathListSeparator)+tools)
-	// Not running unless the test starts a fake one.
-	old := control.SunshineCheckAddr
+	// Not running unless the test starts a fake one; reachable when it is.
+	old, oldReach := control.SunshineCheckAddr, control.SunshineReachable
 	control.SunshineCheckAddr = "127.0.0.1:1"
-	t.Cleanup(func() { control.SunshineCheckAddr = old })
+	control.SunshineReachable = func(string) bool { return control.SunshineRunning() }
+	t.Cleanup(func() { control.SunshineCheckAddr, control.SunshineReachable = old, oldReach })
 
 	// Sunshine's web API: accepts the PIN only if it is the one Moonlight
 	// is pairing with, which marks the pair as done.
@@ -272,4 +273,17 @@ func TestControlMissingPrograms(t *testing.T) {
 			t.Errorf("got %+v", s)
 		}
 	})
+}
+
+func TestControlFirewallBlocksSunshine(t *testing.T) {
+	newControlFakes(t, true, true)
+	sunshineUp(t)
+	control.SunshineReachable = func(string) bool { return false } // its firewall drops us
+	a, b, la, _ := controlPair(t)
+	a.peers[b.cfg.ID].OS = "linux"
+	a.StartControl(t.Context(), b.cfg.ID)
+	s := la.waitControl(t)
+	if s.Step != "error" || !strings.Contains(s.Message, "firewall blocks Sunshine") || !strings.Contains(s.Hint, "ufw allow") {
+		t.Errorf("got %+v", s)
+	}
 }

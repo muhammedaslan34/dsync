@@ -7,6 +7,7 @@
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version,
     FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
+    AllowSunshineFirewall,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -666,6 +667,11 @@
     onCheckUpdate={checkUpdate}
     onInstallUpdate={installUpdate}
     onInstallProgram={installProgram}
+    onAllowSunshine={() => run(async () => {
+      await AllowSunshineFirewall()
+      hostInfo = await HostInfo()
+      showToast('Other computers can now reach Sunshine here')
+    })}
     onSunshineSetup={() => run(async () => {
       await OpenSunshineSetup()
       hostInfo = await HostInfo()

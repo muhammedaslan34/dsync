@@ -2,3 +2,8 @@
 title=dsync
 description=Send text, files and the clipboard between your computers
 ports=47100/udp|47101/tcp
+
+[dsync-remote-control]
+title=dsync remote control (Sunshine)
+description=Lets other computers control this one through Sunshine
+ports=47984,47989,48010/tcp|47998:48000,48002,48010/udp

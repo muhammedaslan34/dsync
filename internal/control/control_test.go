@@ -121,6 +121,7 @@ if [ "$1" = list ]; then
     paired) echo Desktop; exit 0 ;;
     unpaired) echo "Computer $2 has not been paired. Please open Moonlight to pair before retrieving games list." >&2; exit 255 ;;
     down) echo "Failed to connect to $2" >&2; exit 255 ;;
+    silent) echo "00:00:00 - Qt Warning: SetProcessDpiAwarenessContext() failed" >&2; exit 1 ;;
   esac
 fi
 exit 0
@@ -135,7 +136,8 @@ exit 0
 }
 
 func TestMoonlightPairedStates(t *testing.T) {
-	for state, want := range map[string]string{"paired": "true", "unpaired": "false", "down": "error"} {
+	// "silent" is Moonlight on Windows, which exits without saying why.
+	for state, want := range map[string]string{"paired": "true", "unpaired": "false", "down": "error", "silent": "false"} {
 		m, _ := fakeMoonlight(t, state)
 		ok, err := m.Paired(context.Background(), "192.168.1.20")
 		got := map[bool]string{true: "true", false: "false"}[ok]
@@ -200,6 +202,21 @@ func TestInstallCommand(t *testing.T) {
 		}
 		if got != c.want {
 			t.Errorf("%s %v %s: got %q (%v), want %q", c.os, c.tools, c.prog, got, err, c.want)
+		}
+	}
+}
+
+func TestUfwAllowsSunshine(t *testing.T) {
+	for rules, want := range map[string]bool{
+		"### tuple ### allow udp 47100 0.0.0.0/0 any 0.0.0.0/0 in\n### tuple ### allow tcp 47101 0.0.0.0/0 any 0.0.0.0/0 in": false,
+		"### tuple ### allow tcp 47984,47989,48010 0.0.0.0/0 any 0.0.0.0/0 in comment=53":                                    true,
+		"### tuple ### allow tcp 47000:48000 0.0.0.0/0 any 0.0.0.0/0 in":                                                     true,
+		"### tuple ### deny tcp 47989 0.0.0.0/0 any 0.0.0.0/0 in":                                                            false,
+		"### tuple ### allow udp 47989 0.0.0.0/0 any 0.0.0.0/0 in":                                                           false,
+		"### tuple ### allow any any 0.0.0.0/0 any 192.168.1.0/24 in":                                                        true,
+	} {
+		if got := ufwAllowsSunshine(rules); got != want {
+			t.Errorf("%q: got %v", rules, got)
 		}
 	}
 }

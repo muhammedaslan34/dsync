@@ -7,6 +7,8 @@ import {proto} from '../models';
 
 export function AddPeer(arg1:string):Promise<node.Peer>;
 
+export function AllowSunshineFirewall():Promise<void>;
+
 export function AnswerPair(arg1:string,arg2:boolean):Promise<void>;
 
 export function Background():Promise<main.BackgroundSettings>;

@@ -6,6 +6,10 @@ export function AddPeer(arg1) {
   return window['go']['main']['App']['AddPeer'](arg1);
 }
 
+export function AllowSunshineFirewall() {
+  return window['go']['main']['App']['AllowSunshineFirewall']();
+}
+
 export function AnswerPair(arg1, arg2) {
   return window['go']['main']['App']['AnswerPair'](arg1, arg2);
 }

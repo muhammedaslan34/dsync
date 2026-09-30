@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -67,6 +68,82 @@ func Install(ctx context.Context, program string) error {
 			// service.
 			exec.Command("systemctl", "--user", "enable", "--now", unit).Run()
 		}
+		// Windows' Sunshine installer opens the firewall; on Linux we do.
+		if SunshineFirewallBlocked() {
+			if err := AllowSunshineFirewall(ctx); err != nil {
+				return fmt.Errorf("Sunshine is installed, but the firewall still blocks it: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// Sunshine's streaming ports. Its settings page (47990) is left closed so
+// it stays reachable only from this computer.
+const (
+	sunshineTCP = "47984,47989,48010"
+	sunshineUDP = "47998:48000,48002,48010"
+)
+
+// ufwRules is where ufw keeps the user's rules; a variable for tests.
+var ufwRules = "/etc/ufw/user.rules"
+
+// SunshineFirewallBlocked reports whether ufw is on and doesn't allow
+// Sunshine's ports, so other computers can't control this one.
+func SunshineFirewallBlocked() bool {
+	if runtimeOS != "linux" {
+		return false
+	}
+	if _, err := lookPath("ufw"); err != nil {
+		return false
+	}
+	if exec.Command("systemctl", "is-active", "-q", "ufw").Run() != nil {
+		return false
+	}
+	rules, err := os.ReadFile(ufwRules)
+	if err != nil {
+		return false // can't tell; don't nag
+	}
+	return !ufwAllowsSunshine(string(rules))
+}
+
+// ufwAllowsSunshine reports whether user.rules allows Sunshine's main port.
+func ufwAllowsSunshine(rules string) bool {
+	for _, line := range strings.Split(rules, "\n") {
+		if !strings.HasPrefix(line, "### tuple ### allow") {
+			continue
+		}
+		f := strings.Fields(line)
+		// ### tuple ### allow <proto> <ports> ...
+		if len(f) > 5 && (f[4] == "tcp" || f[4] == "any") {
+			for _, p := range strings.Split(f[5], ",") {
+				if p == "47989" || p == "any" {
+					return true
+				}
+				if lo, hi, ok := strings.Cut(p, ":"); ok && lo <= "47989" && "47989" <= hi && len(lo) == 5 && len(hi) == 5 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// AllowSunshineFirewall opens Sunshine's ports in ufw (asks for the
+// password in a window).
+func AllowSunshineFirewall(ctx context.Context) error {
+	if _, err := lookPath("pkexec"); err != nil {
+		return errors.New("run: sudo ufw allow proto tcp to any port " + sunshineTCP + " && sudo ufw allow proto udp to any port " + sunshineUDP)
+	}
+	script := "ufw allow proto tcp to any port " + sunshineTCP + " comment 'Sunshine (dsync remote control)' && " +
+		"ufw allow proto udp to any port " + sunshineUDP + " comment 'Sunshine (dsync remote control)'"
+	out, err := exec.CommandContext(ctx, "pkexec", "sh", "-c", script).CombinedOutput()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && (ee.ExitCode() == 126 || ee.ExitCode() == 127) {
+			return errors.New("the password prompt was canceled")
+		}
+		return errors.New(strings.TrimSpace(string(out)))
 	}
 	return nil
 }

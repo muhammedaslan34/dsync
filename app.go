@@ -15,6 +15,7 @@ import (
 
 	"dsync/internal/clip"
 	"dsync/internal/config"
+	"dsync/internal/control"
 	"dsync/internal/discovery"
 	"dsync/internal/node"
 	"dsync/internal/proto"
@@ -295,4 +296,12 @@ func (a *App) OpenSunshineSetup() error {
 	}
 	wruntime.BrowserOpenURL(a.ctx, a.node.HostInfo().SunshineURL)
 	return nil
+}
+
+// AllowSunshineFirewall opens this computer's firewall (ufw) for Sunshine,
+// so other computers can control it; asks for the password in a window.
+func (a *App) AllowSunshineFirewall() error {
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+	defer cancel()
+	return control.AllowSunshineFirewall(ctx)
 }
