@@ -32,6 +32,11 @@ type Config struct {
 	TrayHintShown bool `json:"tray_hint_shown,omitempty"`
 	// ClipboardSync shares the clipboard with paired devices.
 	ClipboardSync bool `json:"clipboard_sync,omitempty"`
+	// Sunshine web UI login, if saved, lets paired devices finish remote
+	// control setup here on their own. SunshineWeb overrides its address.
+	SunshineUser     string `json:"sunshine_user,omitempty"`
+	SunshinePassword string `json:"sunshine_password,omitempty"`
+	SunshineWeb      string `json:"sunshine_web,omitempty"`
 	// Trusted are the paired devices. Only they may send us data.
 	Trusted []TrustedPeer `json:"trusted,omitempty"`
 

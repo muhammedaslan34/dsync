@@ -11,6 +11,8 @@ export function AnswerPair(arg1:string,arg2:boolean):Promise<void>;
 
 export function Background():Promise<main.BackgroundSettings>;
 
+export function CancelControl(arg1:string):Promise<void>;
+
 export function CancelPair(arg1:string):Promise<void>;
 
 export function CancelTransfer(arg1:number):Promise<void>;
@@ -27,9 +29,13 @@ export function ForgetPeer(arg1:string):Promise<void>;
 
 export function History():Promise<Array<node.Message>>;
 
+export function HostInfo():Promise<node.HostInfo>;
+
 export function LocalAddrs():Promise<Array<discovery.LocalAddr>>;
 
 export function OpenPath(arg1:string):Promise<void>;
+
+export function OpenURL(arg1:string):Promise<void>;
 
 export function Peers():Promise<Array<node.Peer>>;
 
@@ -64,6 +70,10 @@ export function SetClipboardSync(arg1:boolean):Promise<void>;
 export function SetKeepInTray(arg1:boolean):Promise<void>;
 
 export function SetName(arg1:string):Promise<void>;
+
+export function SetSunshineLogin(arg1:string,arg2:string):Promise<void>;
+
+export function StartControl(arg1:string):Promise<void>;
 
 export function StartPair(arg1:string):Promise<string>;
 

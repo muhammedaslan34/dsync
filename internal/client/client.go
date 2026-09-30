@@ -193,3 +193,30 @@ func withDefaultTimeout(ctx context.Context, d time.Duration) (context.Context, 
 func (c *Client) SendClipboard(ctx context.Context, addr, fp string, d proto.ClipboardData) error {
 	return c.postJSON(ctx, addr, fp, "/api/v1/clipboard", d, nil, http.StatusNoContent)
 }
+
+// ControlStatus asks a paired device about its remote control setup.
+func (c *Client) ControlStatus(ctx context.Context, addr, fp string) (proto.ControlStatus, error) {
+	var st proto.ControlStatus
+	ctx, cancel := withDefaultTimeout(ctx, 10*time.Second)
+	defer cancel()
+	err := c.postJSON(ctx, addr, fp, "/api/v1/control/status", struct{}{}, &st, http.StatusOK)
+	return st, err
+}
+
+// StartSunshine asks a paired device to start its Sunshine host.
+func (c *Client) StartSunshine(ctx context.Context, addr, fp string) (proto.ControlStatus, error) {
+	var st proto.ControlStatus
+	ctx, cancel := withDefaultTimeout(ctx, 30*time.Second)
+	defer cancel()
+	err := c.postJSON(ctx, addr, fp, "/api/v1/control/start-sunshine", struct{}{}, &st, http.StatusOK)
+	return st, err
+}
+
+// ControlPIN hands a paired device the PIN Moonlight is pairing with.
+func (c *Client) ControlPIN(ctx context.Context, addr, fp string, r proto.ControlPINRequest) (proto.ControlPINResult, error) {
+	var res proto.ControlPINResult
+	ctx, cancel := withDefaultTimeout(ctx, 60*time.Second)
+	defer cancel()
+	err := c.postJSON(ctx, addr, fp, "/api/v1/control/pin", r, &res, http.StatusOK)
+	return res, err
+}

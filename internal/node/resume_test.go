@@ -28,6 +28,12 @@ type testNode struct {
 
 func newTestNode(t *testing.T, name string) testNode {
 	t.Helper()
+	return newTestNodeWith(t, name, nil)
+}
+
+// newTestNodeWith is newTestNode with an event callback.
+func newTestNodeWith(t *testing.T, name string, emit func(string, any)) testNode {
+	t.Helper()
 	dir := t.TempDir()
 	cfg, err := config.LoadFrom(dir)
 	if err != nil {
@@ -35,7 +41,7 @@ func newTestNode(t *testing.T, name string) testNode {
 	}
 	cfg.Name = name
 	cfg.DownloadDir = filepath.Join(dir, "recv")
-	n, err := New(cfg, nil)
+	n, err := New(cfg, emit)
 	if err != nil {
 		t.Fatal(err)
 	}

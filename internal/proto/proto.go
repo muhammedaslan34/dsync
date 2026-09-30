@@ -109,3 +109,25 @@ type ClipboardData struct {
 	Image    []byte `json:"image,omitempty"` // PNG
 	FromName string `json:"from_name,omitempty"`
 }
+
+// ControlStatus is the remote control state of a computer
+// (GET /api/v1/control/status).
+type ControlStatus struct {
+	SunshineInstalled bool `json:"sunshine_installed"`
+	SunshineRunning   bool `json:"sunshine_running"`
+	// AutoPIN means dsync there can enter a Moonlight PIN into Sunshine
+	// itself (a Sunshine login is saved).
+	AutoPIN bool `json:"auto_pin"`
+}
+
+// ControlPINRequest hands over the PIN Moonlight is pairing with
+// (POST /api/v1/control/pin).
+type ControlPINRequest struct {
+	PIN      string `json:"pin"`
+	FromName string `json:"from_name"`
+}
+
+type ControlPINResult struct {
+	Auto  bool   `json:"auto"`            // entered into Sunshine automatically
+	Error string `json:"error,omitempty"` // why it couldn't be, if it tried
+}

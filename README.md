@@ -89,6 +89,25 @@ the app menu. On GNOME the tray needs the *AppIndicator and KStatusNotifierItem 
 extension; without a tray, closing the window quits as before. Opening dsync again while
 it runs brings the running one back.
 
+**Remote control:** click the screen icon in a paired device's header (or run
+`dsync control --to NAME`) to see and control its desktop. The streaming is done by
+[Moonlight](https://moonlight-stream.org) on the computer you control *from* and
+[Sunshine](https://app.lizardbyte.dev) on the one being controlled:
+
+```sh
+sudo pacman -S moonlight-qt              # Arch/CachyOS, to control other computers
+sudo pacman -S sunshine                  # Arch/CachyOS, to be controlled
+winget install MoonlightGameStreamingProject.Moonlight   # Windows
+winget install LizardByte.Sunshine                        # Windows
+```
+
+Open Sunshine once after installing it to set its username and password. dsync then does
+the rest: it starts Sunshine on the other computer if it isn't running, pairs Moonlight with
+it the first time (sending the PIN over dsync's encrypted connection), and opens the stream.
+If you save the Sunshine login in dsync's Settings on the controlled computer, that first
+pairing needs nobody there; otherwise dsync shows the PIN on that computer to type into
+Sunshine. The login is stored in dsync's settings file, readable only by your user.
+
 Only one dsync (app or `dsync serve`) can run per computer, since both use the same ports.
 
 Command-line tool:
@@ -102,6 +121,7 @@ dsync send --to MyPC a.zip b.iso  # send files with a progress bar
 dsync send --to MyPC ~/Photos     # send a folder (run again to resume)
 dsync text --addr 100.64.0.2 "hi" # skip discovery
 dsync pair --to MyPC              # pair (confirm the code on both screens)
+dsync control --to MyPC           # control MyPC's desktop with Moonlight
 ```
 
 Settings and message history live in `~/.config/dsync/` (Linux) or `%AppData%\dsync\`
@@ -131,4 +151,4 @@ command line, use `dsync pair --to NAME`.)
 4. ✅ Resume, paste to send, folders
 5. ✅ Clipboard sync
 6. ✅ Tray icon, notifications, start at login
-7. `dsync control` (launch Moonlight)
+7. ✅ Remote control (Moonlight + Sunshine)

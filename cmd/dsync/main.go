@@ -22,6 +22,8 @@ Usage:
   echo hi | dsync text [--to NAME]    send text read from stdin
   dsync send [--to NAME] PATH...      send files and folders (run again to resume)
   dsync pair [--to NAME]              pair with a device (confirm the code on both sides)
+  dsync control [--to NAME]           control a device's desktop with Moonlight (needs
+                                      Sunshine there; sets it up the first time)
   dsync version
 
 Flags for text, send and pair (put them before the message or files):
@@ -51,6 +53,8 @@ func main() {
 		err = cmdSend(cfg, args)
 	case "pair":
 		err = cmdPair(cfg, args)
+	case "control":
+		err = cmdControl(cfg, args)
 	case "version":
 		fmt.Println("dsync", version)
 	case "help", "-h", "--help":

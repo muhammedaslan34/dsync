@@ -98,6 +98,30 @@ export namespace node {
 	        this.run = source["run"];
 	    }
 	}
+	export class HostInfo {
+	    moonlight: boolean;
+	    moonlightHint?: string;
+	    sunshineInstalled: boolean;
+	    sunshineRunning: boolean;
+	    sunshineHint?: string;
+	    sunshineLogin: boolean;
+	    sunshineUrl: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.moonlight = source["moonlight"];
+	        this.moonlightHint = source["moonlightHint"];
+	        this.sunshineInstalled = source["sunshineInstalled"];
+	        this.sunshineRunning = source["sunshineRunning"];
+	        this.sunshineHint = source["sunshineHint"];
+	        this.sunshineLogin = source["sunshineLogin"];
+	        this.sunshineUrl = source["sunshineUrl"];
+	    }
+	}
 	export class Message {
 	    id: number;
 	    time: number;

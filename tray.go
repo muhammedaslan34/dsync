@@ -175,8 +175,8 @@ func (a *App) onEvent(event string, data any) {
 	switch event {
 	case node.EventPeers:
 		a.updateTray()
-	case node.EventPairRequest:
-		a.showWindow() // it needs an answer
+	case node.EventPairRequest, node.EventControlPIN:
+		a.showWindow() // it needs someone here
 	case node.EventMessage:
 		m := data.(node.Message)
 		if m.Incoming && m.File == nil && a.windowHidden() {

@@ -5,6 +5,7 @@
     PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
+    StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -14,6 +15,8 @@
   import SettingsDialog from './lib/SettingsDialog.svelte'
   import PairDialog from './lib/PairDialog.svelte'
   import PasteDialog from './lib/PasteDialog.svelte'
+  import ControlDialog from './lib/ControlDialog.svelte'
+  import ControlPinDialog from './lib/ControlPinDialog.svelte'
   import { pastedItems, pasteName, toBase64, baseName, MAX_PASTE_BYTES } from './lib/paste.js'
   import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
 
@@ -38,6 +41,9 @@
   let attachOpen = $state(false)
   let clipStatus = $state({ enabled: false, available: false })
   let bg = $state({})
+  let hostInfo = $state({})
+  let control = $state(null) // { peer, state } while setting up remote control
+  let controlPins = $state([]) // PIN requests shown on this (controlled) computer
   let theme = $state(loadTheme())
 
   let messagesEl = $state()
@@ -101,6 +107,13 @@
     EventsOn('progress', (p) => { progress[p.id] = p })
     EventsOn('error', (e) => { serviceError = e })
     EventsOn('clipboard:status', (s) => { clipStatus = s })
+    EventsOn('control', (s) => {
+      if (control && control.peer.id === s.peerId) {
+        control.state = { ...s, pin: s.pin || (s.step === 'pairing' ? control.state.pin : '') }
+        if (s.step === 'canceled') control = null
+      }
+    })
+    EventsOn('control:pin', (p) => { controlPins = [...controlPins, p] })
     EventsOn('open-peer', (id) => { dialog = null; select(id) })
     EventsOn('clipboard', (c) => {
       showToast(c.kind === 'image' ? `Image copied from ${c.peerName}` : `Clipboard from ${c.peerName}`, 'clip')
@@ -238,7 +251,10 @@
 
   function openDialog(name) {
     dialog = name
-    if (name === 'settings') Background().then((b) => (bg = b))
+    if (name === 'settings') {
+      Background().then((b) => (bg = b))
+      HostInfo().then((h) => (hostInfo = h))
+    }
     LocalAddrs().then((a) => (localAddrs = a ?? []))
   }
 
@@ -314,6 +330,15 @@
     if (!pasted) return
     for (const it of pasted.items) if (it.url) URL.revokeObjectURL(it.url)
     pasted = null
+  }
+
+  async function startControl(d) {
+    control = { peer: d, state: { step: 'checking' } }
+    try {
+      await StartControl(d.id)
+    } catch (e) {
+      control.state = { step: 'error', message: String(e) }
+    }
   }
 
   function preview(m) {
@@ -407,6 +432,9 @@
           {#if selected.paired}
             <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
             <button class="icon-btn" title="Send a folder" onclick={() => run(() => PickFolder(selected.id))}><Icon name="folderUp" /></button>
+          {/if}
+          {#if selected.paired && selected.online}
+            <button class="icon-btn" title="Control this computer" onclick={() => startControl(selected)}><Icon name="monitor" /></button>
           {/if}
           <button class="icon-btn" title="Open received files folder" onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
           {#if selected.paired}
@@ -561,6 +589,13 @@
     {fingerprint}
     {clipStatus}
     {bg}
+    {hostInfo}
+    onSunshineLogin={async (user, pw) => {
+      await SetSunshineLogin(user, pw)
+      hostInfo = await HostInfo()
+      showToast(user ? 'Sunshine login saved' : 'Sunshine login removed')
+    }}
+    onOpenURL={OpenURL}
     onBackground={(setter, on) => run(async () => {
       await setter(on)
       bg = await Background()
@@ -598,6 +633,19 @@
   <PairDialog pair={pairIn[0]} onAnswer={answerPair} />
 {:else if pairOut}
   <PairDialog pair={pairOut} onCancel={closePairOut} onRetry={() => startPair({ id: pairOut.peerId, name: pairOut.name })} />
+{/if}
+
+{#if controlPins.length}
+  <ControlPinDialog request={controlPins[0]} onOpen={OpenURL} onCopy={copy} onClose={() => (controlPins = controlPins.slice(1))} />
+{:else if control}
+  <ControlDialog
+    peer={control.peer}
+    state={control.state}
+    onCancel={() => { CancelControl(control.peer.id); control = null }}
+    onRetry={() => startControl(control.peer)}
+    onClose={() => (control = null)}
+    onCopy={copy}
+  />
 {/if}
 
 {#if pasted}

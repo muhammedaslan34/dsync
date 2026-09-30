@@ -248,3 +248,24 @@ func (a *App) Background() BackgroundSettings {
 func (a *App) SetKeepInTray(keep bool) error { return a.node.SetQuitOnClose(!keep) }
 func (a *App) SetAutostart(on bool) error    { return setAutostart(on) }
 func (a *App) SetAppMenu(on bool) error      { return setAppMenu(on) }
+
+// StartControl opens Moonlight controlling a paired device, setting up
+// Sunshine and pairing first if needed; progress arrives as "control"
+// events.
+func (a *App) StartControl(peerID string) error { return a.node.StartControl(a.ctx, peerID) }
+
+func (a *App) CancelControl(peerID string) { a.node.CancelControl(peerID) }
+
+// HostInfo reports this computer's Moonlight and Sunshine setup.
+func (a *App) HostInfo() node.HostInfo { return a.node.HostInfo() }
+
+// SetSunshineLogin saves the Sunshine web login (checked first); an empty
+// user removes it.
+func (a *App) SetSunshineLogin(user, password string) error {
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return a.node.SetSunshineLogin(ctx, user, password)
+}
+
+// OpenURL opens a web page, e.g. Sunshine's PIN page.
+func (a *App) OpenURL(url string) { wruntime.BrowserOpenURL(a.ctx, url) }

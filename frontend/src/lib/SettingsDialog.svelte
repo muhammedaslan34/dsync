@@ -5,11 +5,29 @@
 
   let {
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
-    bg, onBackground, setters,
+    bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
   let name = $state('')
+  let sunUser = $state('')
+  let sunPass = $state('')
+  let sunBusy = $state(false)
+  let sunError = $state('')
+
+  async function saveSunshine(e) {
+    e.preventDefault()
+    sunBusy = true
+    sunError = ''
+    try {
+      await onSunshineLogin(sunUser.trim(), sunPass)
+      sunPass = ''
+    } catch (err) {
+      sunError = String(err)
+    } finally {
+      sunBusy = false
+    }
+  }
   $effect(() => { name = self.name }) // reset when the saved name changes
   let saving = $state(false)
 
@@ -113,6 +131,47 @@
           <input type="checkbox" class="switch" role="switch" checked={bg.appMenu}
             onchange={(e) => onBackground(setters.SetAppMenu, e.currentTarget.checked)} />
         </label>
+      {/if}
+    </section>
+
+    <section class="setting">
+      <div class="setting-title">Remote control</div>
+      <div class="rc-status">
+        <div class="rc-row">
+          <span class="rc-dot" class:ok={hostInfo.moonlight}></span>
+          <span><b>Moonlight</b> {hostInfo.moonlight ? 'is installed: you can control other computers from here.' : "isn't installed: needed to control other computers."}</span>
+        </div>
+        {#if hostInfo.moonlightHint}<code class="rc-hint">{hostInfo.moonlightHint}</code>{/if}
+        <div class="rc-row">
+          <span class="rc-dot" class:ok={hostInfo.sunshineRunning} class:warn={hostInfo.sunshineInstalled && !hostInfo.sunshineRunning}></span>
+          <span><b>Sunshine</b>
+            {#if hostInfo.sunshineRunning}is running: paired devices can control this computer.
+            {:else if hostInfo.sunshineInstalled}is installed but not running (dsync starts it when needed).
+            {:else}isn't installed: needed for other computers to control this one.{/if}
+          </span>
+        </div>
+        {#if hostInfo.sunshineHint}<code class="rc-hint">{hostInfo.sunshineHint}</code>{/if}
+      </div>
+      {#if hostInfo.sunshineInstalled || hostInfo.sunshineRunning}
+        {#if hostInfo.sunshineLogin}
+          <div class="rc-login-saved">
+            <span class="muted small"><Icon name="check" size={13} stroke={3} /> Sunshine login saved: paired devices finish setup on their own.</span>
+            <button class="text-btn small" onclick={() => onSunshineLogin('', '')}>Remove</button>
+          </div>
+        {:else}
+          <form class="rc-login" onsubmit={saveSunshine}>
+            <p class="muted small">
+              Optional: save the login you set in <button type="button" class="text-btn" onclick={() => onOpenURL(hostInfo.sunshineUrl)}>Sunshine's web page</button>
+              so paired devices can set up remote control without you entering a PIN here.
+            </p>
+            <div class="input-row">
+              <input placeholder="Sunshine username" bind:value={sunUser} autocomplete="off" />
+              <input placeholder="Password" type="password" bind:value={sunPass} autocomplete="off" />
+              <button class="btn secondary" disabled={sunBusy || !sunUser.trim() || !sunPass}>{sunBusy ? 'Checking…' : 'Save'}</button>
+            </div>
+            {#if sunError}<p class="form-error"><Icon name="alert" size={14} /> {sunError}</p>{/if}
+          </form>
+        {/if}
       {/if}
     </section>
 

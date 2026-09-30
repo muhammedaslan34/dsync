@@ -390,3 +390,45 @@ func humanBytes(n int64) string {
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
+
+// cmdControl opens Moonlight controlling another computer's desktop,
+// starting Sunshine there and pairing Moonlight with it first if needed.
+func cmdControl(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("control", flag.ExitOnError)
+	to := fs.String("to", "", "device name or id prefix")
+	addr := fs.String("addr", "", "the device's HOST[:PORT], skipping discovery")
+	fs.Parse(args)
+
+	cl, _, err := newClient(cfg)
+	if err != nil {
+		return err
+	}
+	t, err := resolvePaired(cfg, cl, *to, *addr)
+	if err != nil {
+		return err
+	}
+	d, _, err := cl.Info(context.Background(), t.addr)
+	if err != nil {
+		return err
+	}
+	n, err := node.New(cfg, func(event string, data any) {
+		if s, ok := data.(node.ControlState); ok && event == node.EventControl {
+			if s.PIN != "" {
+				fmt.Fprintf(os.Stderr, "%s\n  PIN: %s\n", s.Message, s.PIN)
+			} else if s.Message != "" {
+				fmt.Fprintln(os.Stderr, s.Message)
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	err = n.RunControl(ctx, node.Peer{ID: t.id, Name: t.name, OS: d.OS, Addr: t.addr}, t.fp)
+	var ce interface{ Hint() string }
+	if errors.As(err, &ce) && ce.Hint() != "" {
+		return fmt.Errorf("%w\n%s", err, ce.Hint())
+	}
+	return err
+}

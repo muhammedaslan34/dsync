@@ -14,6 +14,10 @@ export function Background() {
   return window['go']['main']['App']['Background']();
 }
 
+export function CancelControl(arg1) {
+  return window['go']['main']['App']['CancelControl'](arg1);
+}
+
 export function CancelPair(arg1) {
   return window['go']['main']['App']['CancelPair'](arg1);
 }
@@ -46,12 +50,20 @@ export function History() {
   return window['go']['main']['App']['History']();
 }
 
+export function HostInfo() {
+  return window['go']['main']['App']['HostInfo']();
+}
+
 export function LocalAddrs() {
   return window['go']['main']['App']['LocalAddrs']();
 }
 
 export function OpenPath(arg1) {
   return window['go']['main']['App']['OpenPath'](arg1);
+}
+
+export function OpenURL(arg1) {
+  return window['go']['main']['App']['OpenURL'](arg1);
 }
 
 export function Peers() {
@@ -120,6 +132,14 @@ export function SetKeepInTray(arg1) {
 
 export function SetName(arg1) {
   return window['go']['main']['App']['SetName'](arg1);
+}
+
+export function SetSunshineLogin(arg1, arg2) {
+  return window['go']['main']['App']['SetSunshineLogin'](arg1, arg2);
+}
+
+export function StartControl(arg1) {
+  return window['go']['main']['App']['StartControl'](arg1);
 }
 
 export function StartPair(arg1) {

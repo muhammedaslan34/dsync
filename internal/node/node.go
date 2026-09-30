@@ -85,6 +85,8 @@ type Node struct {
 	folderReps map[int64]func(int64)
 
 	clip clipState
+	// controls are remote control setups in progress, by peer id.
+	controls map[string]context.CancelFunc
 }
 
 // New loads (or creates) this device's identity and history.
@@ -104,6 +106,7 @@ func New(cfg *config.Config, emit func(event string, data any)) (*Node, error) {
 		pairing:    map[string]context.CancelFunc{},
 		parts:      map[string]*partClaim{},
 		folderReps: map[int64]func(int64){},
+		controls:   map[string]context.CancelFunc{},
 	}
 	n.loadHistory()
 	return n, nil

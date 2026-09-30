@@ -32,6 +32,9 @@ func (n *Node) handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/file/offset", n.paired(n.handleFileOffset))
 	mux.HandleFunc("POST /api/v1/folder/end", n.paired(n.handleFolderEnd))
 	mux.HandleFunc("POST /api/v1/clipboard", n.paired(n.handleClipboard))
+	mux.HandleFunc("POST /api/v1/control/status", n.paired(n.handleControlStatus))
+	mux.HandleFunc("POST /api/v1/control/start-sunshine", n.paired(n.handleStartSunshine))
+	mux.HandleFunc("POST /api/v1/control/pin", n.paired(n.handleControlPIN))
 	return mux
 }
 

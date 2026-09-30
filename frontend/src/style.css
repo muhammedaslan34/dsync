@@ -879,3 +879,43 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .switch:disabled { cursor: default; }
 .switch:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .setting .switch-row + .switch-row { margin-top: 12px; }
+
+/* ---------- Remote control ---------- */
+.control-dialog { width: min(470px, calc(100% - 32px)); }
+.control-title { display: flex; gap: 12px; align-items: center; }
+.control-steps { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.control-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13.5px; }
+.control-steps li.active { color: var(--text); font-weight: 600; }
+.control-steps li.past { color: var(--text-2); }
+.step-dot {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  flex-shrink: 0;
+}
+.control-steps li.past .step-dot { background: var(--ok); border-color: var(--ok); color: #fff; }
+.control-steps li.active .step-dot { border-color: transparent; }
+.control-msg { margin: 14px 0 0; }
+.control-dialog .pair-code { margin-top: 12px; text-align: center; }
+.control-error { display: flex; gap: 10px; color: var(--danger); }
+.control-error b { color: var(--text); font-weight: 600; }
+.hint-box { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--sidebar); border: 1px solid var(--border); }
+.hint-box code, .rc-hint { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--text-2); user-select: text; white-space: pre-wrap; word-break: break-word; }
+.hint-box code { flex: 1; }
+.control-done { display: flex; align-items: center; gap: 8px; color: var(--ok); font-weight: 600; }
+
+.rc-status { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-2); }
+.rc-row { display: flex; gap: 9px; align-items: baseline; }
+.rc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); flex-shrink: 0; transform: translateY(-1px); }
+.rc-dot.ok { background: var(--online); }
+.rc-dot.warn { background: #e5a100; }
+.rc-hint { display: block; margin-left: 17px; padding: 6px 9px; border-radius: 7px; background: var(--sidebar); }
+.rc-login { margin-top: 12px; }
+.rc-login p { margin: 0 0 8px; }
+.rc-login input { min-width: 0; }
+.rc-login-saved { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+.pair-code.with-copy { position: relative; }
+.pair-code.with-copy .icon-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
