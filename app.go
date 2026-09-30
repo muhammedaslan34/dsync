@@ -100,7 +100,16 @@ func (a *App) PickFiles(peerID string) error {
 	return a.node.SendFiles(a.ctx, peerID, paths)
 }
 
-// SendPaths sends files dropped onto the window.
+// PickFolder opens a folder dialog and sends the chosen folder to a peer.
+func (a *App) PickFolder(peerID string) error {
+	dir, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Send folder"})
+	if err != nil || dir == "" {
+		return err
+	}
+	return a.node.SendFiles(a.ctx, peerID, []string{dir})
+}
+
+// SendPaths sends files and folders dropped onto the window.
 func (a *App) SendPaths(peerID string, paths []string) error {
 	return a.node.SendFiles(a.ctx, peerID, paths)
 }

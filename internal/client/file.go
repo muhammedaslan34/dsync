@@ -27,7 +27,18 @@ type FileHeader struct {
 	Name       string
 	Size       int64
 	TransferID string // see TransferID
+
+	// Set for files sent as part of a folder.
+	FolderID    string
+	FolderRun   string
+	FolderSize  int64
+	FolderFiles int
+	RelPath     string // "/" separated, starting with the folder name
 }
+
+// ErrAlreadyReceived means the device already has this file from an earlier
+// attempt at sending the same folder, so nothing was sent.
+var ErrAlreadyReceived = errors.New("already received")
 
 // TransferID identifies sending one version of one file to one device. It is
 // the same every time the same unchanged file is sent, which is what lets an
@@ -48,10 +59,14 @@ func (c *Client) SendFile(ctx context.Context, addr, fp string, h FileHeader, f 
 	}
 	var off proto.OffsetResponse
 	offCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	err := c.postJSON(offCtx, addr, fp, "/api/v1/file/offset", proto.OffsetRequest{TransferID: h.TransferID, Size: h.Size}, &off, http.StatusOK)
+	offReq := proto.OffsetRequest{TransferID: h.TransferID, Size: h.Size, FolderID: h.FolderID, FolderRun: h.FolderRun, RelPath: h.RelPath}
+	err := c.postJSON(offCtx, addr, fp, "/api/v1/file/offset", offReq, &off, http.StatusOK)
 	cancel()
 	if err != nil {
 		return err
+	}
+	if off.Complete {
+		return ErrAlreadyReceived
 	}
 	if off.Offset < 0 || off.Offset > h.Size {
 		off.Offset = 0
@@ -83,6 +98,13 @@ func (c *Client) SendFile(ctx context.Context, addr, fp string, h FileHeader, f 
 	req.Header.Set(proto.HeaderFileSize, strconv.FormatInt(h.Size, 10))
 	req.Header.Set(proto.HeaderTransferID, h.TransferID)
 	req.Header.Set(proto.HeaderOffset, strconv.FormatInt(off.Offset, 10))
+	if h.FolderID != "" {
+		req.Header.Set(proto.HeaderFolderID, h.FolderID)
+		req.Header.Set(proto.HeaderFolderRun, h.FolderRun)
+		req.Header.Set(proto.HeaderFolderSize, strconv.FormatInt(h.FolderSize, 10))
+		req.Header.Set(proto.HeaderFolderFiles, strconv.Itoa(h.FolderFiles))
+		req.Header.Set(proto.HeaderRelPath, url.QueryEscape(h.RelPath))
+	}
 
 	resp, err := c.forKey(fp).Do(req)
 	if err != nil {
@@ -98,12 +120,26 @@ func (c *Client) SendFile(ctx context.Context, addr, fp string, h FileHeader, f 
 	return nil
 }
 
+// FolderID identifies sending one folder from one device, so sending it
+// again continues where an interrupted attempt stopped.
+func FolderID(senderID, root string) string {
+	sum := sha256.Sum256([]byte("folder\x00" + senderID + "\x00" + root))
+	return hex.EncodeToString(sum[:16])
+}
+
+// FolderEnd tells a device that a folder transfer stopped.
+func (c *Client) FolderEnd(ctx context.Context, addr, fp string, e proto.FolderEnd) error {
+	ctx, cancel := withDefaultTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return c.postJSON(ctx, addr, fp, "/api/v1/folder/end", e, nil, http.StatusNoContent)
+}
+
 // Retryable reports whether sending again might succeed, e.g. after the
 // network comes back. Refusals and local problems are not retryable.
 func Retryable(err error) bool {
 	var se *StatusError
 	switch {
-	case err == nil, errors.Is(err, ErrFileChanged), errors.Is(err, ErrIdentityChanged),
+	case err == nil, errors.Is(err, ErrFileChanged), errors.Is(err, ErrIdentityChanged), errors.Is(err, ErrAlreadyReceived),
 		errors.Is(err, context.Canceled):
 		return false
 	case errors.As(err, &se):

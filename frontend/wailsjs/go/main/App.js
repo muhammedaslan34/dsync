@@ -58,6 +58,10 @@ export function PickFiles(arg1) {
   return window['go']['main']['App']['PickFiles'](arg1);
 }
 
+export function PickFolder(arg1) {
+  return window['go']['main']['App']['PickFolder'](arg1);
+}
+
 export function ReceiveDir() {
   return window['go']['main']['App']['ReceiveDir']();
 }

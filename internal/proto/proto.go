@@ -50,6 +50,14 @@ const (
 	HeaderTransferID = "X-Dsync-Transfer-Id"
 	// HeaderOffset is where the body starts in the file (0 unless resuming).
 	HeaderOffset = "X-Dsync-Offset"
+
+	// Files that are part of a folder carry these too. The folder id is
+	// the same every time the same folder is sent, so a retry continues it.
+	HeaderFolderID    = "X-Dsync-Folder-Id"
+	HeaderFolderRun   = "X-Dsync-Folder-Run"   // new for every attempt at sending the folder
+	HeaderFolderSize  = "X-Dsync-Folder-Size"  // total bytes
+	HeaderFolderFiles = "X-Dsync-Folder-Files" // total file count
+	HeaderRelPath     = "X-Dsync-Rel-Path"     // URL query-escaped, "/" separated, starts with the folder name
 )
 
 // OffsetRequest asks how much of a transfer the receiver already has
@@ -57,10 +65,25 @@ const (
 type OffsetRequest struct {
 	TransferID string `json:"transfer_id"`
 	Size       int64  `json:"size"`
+	// For a file in a folder, so the receiver can tell whether it already
+	// has the whole file from an earlier attempt.
+	FolderID  string `json:"folder_id,omitempty"`
+	FolderRun string `json:"folder_run,omitempty"`
+	RelPath   string `json:"rel_path,omitempty"`
 }
 
 type OffsetResponse struct {
 	Offset int64 `json:"offset"`
+	// Complete means the receiver already has this file; skip it.
+	Complete bool `json:"complete,omitempty"`
+}
+
+// FolderEnd tells the receiver a folder transfer stopped
+// (POST /api/v1/folder/end).
+type FolderEnd struct {
+	FolderID string `json:"folder_id"`
+	Status   string `json:"status"` // "done", "failed" or "canceled"
+	Error    string `json:"error,omitempty"`
 }
 
 // PairRequest asks a device to trust the sender. The sender's key comes from

@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte'
   import {
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
-    PickFiles, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
+    PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
@@ -34,6 +34,7 @@
   let pairOut = $state(null) // pairing we started: { kind: 'out', peerId, name, code, error }
   let pairIn = $state([]) // incoming requests waiting for an answer
   let pasted = $state(null) // items waiting for confirmation: { peerId, items }
+  let attachOpen = $state(false)
   let theme = $state(loadTheme())
 
   let messagesEl = $state()
@@ -118,6 +119,7 @@
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        attachOpen = false
         dialog = null
         cancelPaste()
       }
@@ -307,7 +309,7 @@
 
   function preview(m) {
     if (!m) return null
-    const text = m.file ? m.file.name : m.text.split('\n')[0]
+    const text = m.file ? (m.file.folder ? `📁 ${m.file.name}` : m.file.name) : m.text.split('\n')[0]
     return (m.incoming ? '' : 'You: ') + text
   }
 </script>
@@ -395,6 +397,7 @@
         <div class="head-actions">
           {#if selected.paired}
             <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
+            <button class="icon-btn" title="Send a folder" onclick={() => run(() => PickFolder(selected.id))}><Icon name="folderUp" /></button>
           {/if}
           <button class="icon-btn" title="Open received files folder" onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
           {#if selected.paired}
@@ -466,9 +469,24 @@
 
       <form class="composer" onsubmit={(e) => { e.preventDefault(); send() }}>
         <div class="composer-box">
-          <button type="button" class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}>
-            <Icon name="paperclip" />
-          </button>
+          <div class="attach">
+            <button type="button" class="icon-btn" title="Send files or a folder" aria-haspopup="menu" aria-expanded={attachOpen}
+              onclick={() => (attachOpen = !attachOpen)}>
+              <Icon name="paperclip" />
+            </button>
+            {#if attachOpen}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <div class="menu-backdrop" role="presentation" onclick={() => (attachOpen = false)}></div>
+              <div class="menu" role="menu">
+                <button type="button" role="menuitem" onclick={() => { attachOpen = false; run(() => PickFiles(selected.id)) }}>
+                  <Icon name="file" size={16} /> Files…
+                </button>
+                <button type="button" role="menuitem" onclick={() => { attachOpen = false; run(() => PickFolder(selected.id)) }}>
+                  <Icon name="folder" size={16} /> Folder…
+                </button>
+              </div>
+            {/if}
+          </div>
           <textarea
             bind:this={composerEl}
             bind:value={draft}

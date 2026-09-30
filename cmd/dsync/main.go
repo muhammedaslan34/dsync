@@ -20,7 +20,7 @@ Usage:
   dsync devices [--wait 1.5s]         list devices on the local network
   dsync text [--to NAME] MESSAGE      send text to another device
   echo hi | dsync text [--to NAME]    send text read from stdin
-  dsync send [--to NAME] FILE...      send files
+  dsync send [--to NAME] PATH...      send files and folders (run again to resume)
   dsync pair [--to NAME]              pair with a device (confirm the code on both sides)
   dsync version
 

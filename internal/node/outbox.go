@@ -52,7 +52,7 @@ func (n *Node) ImagePath(id int64) (string, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, m := range n.history {
-		if m.ID != id || m.File == nil || m.File.Path == "" {
+		if m.ID != id || m.File == nil || m.File.Path == "" || m.File.Folder {
 			continue
 		}
 		if m.Incoming && m.File.Status != StatusDone {

@@ -38,6 +38,14 @@ type FileInfo struct {
 	Status     string `json:"status"`
 	Error      string `json:"error,omitempty"` // why it failed, or a retry notice while active
 	TransferID string `json:"transferId,omitempty"`
+
+	// Folders: Path is the folder, Size the total of its files.
+	Folder    bool   `json:"folder,omitempty"`
+	Files     int    `json:"files,omitempty"`
+	DoneFiles int    `json:"doneFiles,omitempty"`
+	DoneBytes int64  `json:"doneBytes,omitempty"`
+	FolderID  string `json:"folderId,omitempty"`
+	Run       string `json:"run,omitempty"` // the sender's current attempt (receiver side)
 }
 
 var (
@@ -86,8 +94,8 @@ func (n *Node) SetReceiveDir(dir string) error {
 	return n.cfg.Save()
 }
 
-// SendFiles sends files to a peer one after another in the background.
-// Progress and results are reported through events.
+// SendFiles sends files and folders to a peer one after another in the
+// background. Progress and results are reported through events.
 func (n *Node) SendFiles(ctx context.Context, peerID string, paths []string) error {
 	n.mu.Lock()
 	p, ok := n.peers[peerID]
@@ -103,29 +111,32 @@ func (n *Node) SendFiles(ctx context.Context, peerID string, paths []string) err
 	if !paired {
 		return fmt.Errorf("pair with %s first", peer.Name)
 	}
-	for _, path := range paths {
+	infos := make([]os.FileInfo, len(paths))
+	for i, path := range paths {
 		st, err := os.Stat(path)
 		if err != nil {
 			return err
 		}
-		if st.IsDir() {
-			return fmt.Errorf("%s is a folder; sending folders isn't supported yet", filepath.Base(path))
-		}
+		infos[i] = st
 	}
 
-	// Create all the messages up front so the queue shows at once.
+	// Create all the messages up front so the queue shows at once. A
+	// folder's size and file count are filled in when it starts.
 	ids := make([]int64, len(paths))
 	for i, path := range paths {
-		st, _ := os.Stat(path)
-		m := n.addMessage(Message{
-			PeerID: peer.ID, PeerName: peer.Name,
-			File: &FileInfo{Name: filepath.Base(path), Size: st.Size(), Path: path, Status: StatusActive},
-		})
-		ids[i] = m.ID
+		f := &FileInfo{Name: filepath.Base(path), Size: infos[i].Size(), Path: path, Status: StatusActive}
+		if infos[i].IsDir() {
+			f.Folder, f.Size = true, 0
+		}
+		ids[i] = n.addMessage(Message{PeerID: peer.ID, PeerName: peer.Name, File: f}).ID
 	}
 	go func() {
 		for i, path := range paths {
-			n.sendFile(ctx, peer, t.Fingerprint, ids[i], path)
+			if infos[i].IsDir() {
+				n.sendFolder(ctx, peer, t.Fingerprint, ids[i], path)
+			} else {
+				n.sendFile(ctx, peer, t.Fingerprint, ids[i], path)
+			}
 		}
 	}()
 	return nil
@@ -164,8 +175,17 @@ func (n *Node) RetryTransfer(ctx context.Context, id int64) error {
 	if !paired {
 		return fmt.Errorf("pair with %s first", peer.Name)
 	}
+	n.mu.Lock()
+	if c, ok := n.transfers[id]; ok && c == nil {
+		delete(n.transfers, id) // a cancel marker left from when it was queued
+	}
+	n.mu.Unlock()
 	n.updateFile(id, func(f *FileInfo) { f.Status, f.Error = StatusActive, "" })
-	go n.sendFile(ctx, peer, t.Fingerprint, id, msg.File.Path)
+	if msg.File.Folder {
+		go n.sendFolder(ctx, peer, t.Fingerprint, id, msg.File.Path)
+	} else {
+		go n.sendFile(ctx, peer, t.Fingerprint, id, msg.File.Path)
+	}
 	return nil
 }
 
@@ -176,38 +196,39 @@ func (n *Node) sendFile(ctx context.Context, peer Peer, fp string, id int64, pat
 		n.finishTransfer(ctx, id, "", ctx.Err())
 		return
 	}
+	err := n.transmit(ctx, peer, fp, id, path, client.FileHeader{}, func(size int64) func(int64) {
+		return n.progressReporter(id, size)
+	})
+	n.finishTransfer(ctx, id, "", err)
+}
 
+// transmit sends one file, retrying for a while if the connection drops and
+// showing retry notices on message id. h may carry folder fields; the rest
+// is filled in here. newProgress is called for each attempt with the file's
+// size and returns that attempt's progress callback.
+func (n *Node) transmit(ctx context.Context, peer Peer, fp string, id int64, path string, h client.FileHeader, newProgress func(size int64) func(int64)) error {
 	f, err := os.Open(path)
 	if err != nil {
-		n.finishTransfer(ctx, id, "", err)
-		return
+		return err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		n.finishTransfer(ctx, id, "", err)
-		return
+		return err
 	}
 
 	self := n.Self()
-	h := client.FileHeader{
-		FromID: self.ID, FromName: self.Name, FromPort: self.Port,
-		Name: filepath.Base(path), Size: st.Size(),
-		TransferID: client.TransferID(self.ID, path, st.Size(), st.ModTime()),
-	}
-	n.updateFile(id, func(f *FileInfo) { f.TransferID = h.TransferID })
+	h.FromID, h.FromName, h.FromPort = self.ID, self.Name, self.Port
+	h.Name, h.Size = filepath.Base(path), st.Size()
+	h.TransferID = client.TransferID(self.ID, path, st.Size(), st.ModTime())
 	for attempt := 0; ; attempt++ {
 		// Look the address up each time; it may change while we wait.
-		addr := peer.Addr
-		n.mu.Lock()
-		if p := n.peers[peer.ID]; p != nil {
-			addr = p.Addr
+		err = n.cl.SendFile(ctx, n.peerAddr(peer), fp, h, f, newProgress(st.Size()))
+		if attempt > 0 {
+			n.updateFile(id, func(f *FileInfo) { f.Error = "" })
 		}
-		n.mu.Unlock()
-
-		err = n.cl.SendFile(ctx, addr, fp, h, f, n.progressReporter(id, st.Size()))
 		if err == nil || ctx.Err() != nil || !client.Retryable(err) || attempt >= len(retryDelays) {
-			break
+			return err
 		}
 		wait := retryDelays[attempt]
 		n.updateFile(id, func(f *FileInfo) {
@@ -219,7 +240,6 @@ func (n *Node) sendFile(ctx context.Context, peer Peer, fp string, id int64, pat
 		}
 		n.updateFile(id, func(f *FileInfo) { f.Error = "Reconnecting…" })
 	}
-	n.finishTransfer(ctx, id, "", err)
 }
 
 // handleFileOffset tells a sender how much of a transfer we already have.
@@ -229,6 +249,23 @@ func (n *Node) handleFileOffset(w http.ResponseWriter, r *http.Request, from con
 		http.Error(w, "bad offset request", http.StatusBadRequest)
 		return
 	}
+	if req.FolderID != "" {
+		if m, ok := n.findFolder(from.ID, req.FolderID); ok {
+			if m.File.Status == StatusCanceled && m.File.Run == req.FolderRun {
+				http.Error(w, errFolderCanceled.Error(), http.StatusForbidden)
+				return
+			}
+			// Already have this file from an earlier attempt?
+			if dest, err := folderDest(m.File.Path, req.RelPath); err == nil {
+				if st, err := os.Stat(dest); err == nil && st.Mode().IsRegular() && st.Size() == req.Size {
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(proto.OffsetResponse{Offset: req.Size, Complete: true})
+					return
+				}
+			}
+		}
+	}
+
 	var off int64
 	part := n.partPath(from.ID, req.TransferID)
 	if st, err := os.Stat(part); err == nil {
@@ -284,24 +321,101 @@ func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request, from config.T
 		return
 	}
 
-	id := n.incomingFileMessage(from.ID, fromName, tid, name, size)
+	// Where the file goes, and which message shows it.
+	var (
+		id       int64
+		dest     func() (string, error)
+		progress func(int64)
+		inFolder = r.Header.Get(proto.HeaderFolderID) != ""
+	)
+	if inFolder {
+		fsize, _ := strconv.ParseInt(r.Header.Get(proto.HeaderFolderSize), 10, 64)
+		ffiles, _ := strconv.Atoi(r.Header.Get(proto.HeaderFolderFiles))
+		rel, _ := url.QueryUnescape(r.Header.Get(proto.HeaderRelPath))
+		rootName, _, _ := strings.Cut(rel, "/")
+		var root string
+		id, root, err = n.incomingFolder(from, fromName, r.Header.Get(proto.HeaderFolderID), r.Header.Get(proto.HeaderFolderRun), rootName, fsize, ffiles)
+		if err == nil {
+			_, err = folderDest(root, rel)
+		}
+		if err != nil {
+			f.Close()
+			code := http.StatusBadRequest
+			if errors.Is(err, errFolderCanceled) {
+				code = http.StatusForbidden
+			}
+			http.Error(w, err.Error(), code)
+			return
+		}
+		dest = func() (string, error) {
+			p, err := folderDest(root, rel)
+			if err != nil {
+				return "", err
+			}
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				return "", err
+			}
+			return uniquePath(filepath.Dir(p), filepath.Base(p)), nil
+		}
+		report := n.folderReporter(id, fsize)
+		base := n.fileInfo(id).DoneBytes
+		progress = func(d int64) { report(base + d) }
+	} else {
+		id = n.incomingFileMessage(from.ID, fromName, tid, name, size)
+		dest = func() (string, error) { return uniquePath(dir, name), nil }
+		progress = n.progressReporter(id, size)
+	}
 	ctx, cancel := n.trackTransfer(pctx, id)
 	defer n.untrackTransfer(id, cancel)
 
 	rc := http.NewResponseController(w)
-	final, err := writeIncoming(ctx, r, rc, f, offset, dir, name, size, n.progressReporter(id, size))
+	final, err := writeIncoming(ctx, r, rc, f, offset, size, dest, progress)
 	if err != nil {
 		// Keep what arrived so the sender can resume, unless the data is
 		// bad or the user stopped it here.
-		if errors.Is(err, errChecksum) || errors.Is(context.Cause(ctx), errCanceledByUser) {
+		userCanceled := errors.Is(context.Cause(ctx), errCanceledByUser)
+		if errors.Is(err, errChecksum) || userCanceled {
 			os.Remove(part)
 		}
 		n.finishTransfer(ctx, id, "", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if userCanceled {
+			http.Error(w, errFolderCanceled.Error(), http.StatusForbidden)
+		} else {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
-	n.finishTransfer(ctx, id, final, nil)
+	if inFolder {
+		n.folderFileDone(id, size)
+	} else {
+		n.finishTransfer(ctx, id, final, nil)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// fileInfo returns a copy of message id's file info.
+func (n *Node) fileInfo(id int64) FileInfo {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i := len(n.history) - 1; i >= 0; i-- {
+		if n.history[i].ID == id && n.history[i].File != nil {
+			return *n.history[i].File
+		}
+	}
+	return FileInfo{}
+}
+
+// folderReporter returns the progress callback shared by all files of an
+// incoming folder, so its speed is averaged over the whole folder.
+func (n *Node) folderReporter(id, size int64) func(int64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if r, ok := n.folderReps[id]; ok {
+		return r
+	}
+	r := n.progressReporter(id, size)
+	n.folderReps[id] = r
+	return r
 }
 
 type partClaim struct {
@@ -379,7 +493,7 @@ func (n *Node) incomingFileMessage(peerID, peerName, tid, name string, size int6
 
 // writeIncoming appends the request body to the partial file f from offset,
 // verifies the whole file, and moves it to its final name, which it returns.
-func writeIncoming(ctx context.Context, r *http.Request, rc *http.ResponseController, f *os.File, offset int64, dir, name string, size int64, progress func(int64)) (string, error) {
+func writeIncoming(ctx context.Context, r *http.Request, rc *http.ResponseController, f *os.File, offset, size int64, dest func() (string, error), progress func(int64)) (string, error) {
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, io.NewSectionReader(f, 0, offset)); err != nil {
@@ -409,7 +523,10 @@ func writeIncoming(ctx context.Context, r *http.Request, rc *http.ResponseContro
 	if want := r.Trailer.Get(proto.TrailerSHA256); want == "" || want != hex.EncodeToString(h.Sum(nil)) {
 		return "", errChecksum
 	}
-	final := uniquePath(dir, name)
+	final, err := dest()
+	if err != nil {
+		return "", err
+	}
 	if err := os.Rename(f.Name(), final); err != nil {
 		return "", err
 	}
@@ -482,19 +599,33 @@ func (n *Node) finishTransfer(ctx context.Context, id int64, savedPath string, e
 func (n *Node) CancelTransfer(id int64) {
 	n.mu.Lock()
 	cancel, known := n.transfers[id]
-	if !known {
-		n.transfers[id] = nil // still queued; trackTransfer will see this
+	if !known && n.isOutgoingLocked(id) {
+		// Still queued to send; trackTransfer will see this when it starts.
+		// (An incoming folder between files needs no marker: its status
+		// refuses the rest of the sender's run.)
+		n.transfers[id] = nil
 	}
 	n.mu.Unlock()
 	if cancel != nil {
 		cancel(errCanceledByUser)
-		return
 	}
+	// Mark it now rather than waiting for the transfer to notice: a file
+	// that was just finishing still completes, but a folder stays canceled
+	// and refuses its next file.
 	n.updateFile(id, func(f *FileInfo) {
 		if f.Status == StatusActive {
 			f.Status = StatusCanceled
 		}
 	})
+}
+
+func (n *Node) isOutgoingLocked(id int64) bool {
+	for i := len(n.history) - 1; i >= 0; i-- {
+		if n.history[i].ID == id {
+			return !n.history[i].Incoming
+		}
+	}
+	return false
 }
 
 func (n *Node) trackTransfer(ctx context.Context, id int64) (context.Context, context.CancelCauseFunc) {

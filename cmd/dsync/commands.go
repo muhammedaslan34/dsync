@@ -257,10 +257,8 @@ func cmdSend(cfg *config.Config, args []string) error {
 		return errors.New("no files given")
 	}
 	for _, p := range fs.Args() {
-		if st, err := os.Stat(p); err != nil {
+		if _, err := os.Stat(p); err != nil {
 			return err
-		} else if st.IsDir() {
-			return fmt.Errorf("%s is a folder; sending folders isn't supported yet", p)
 		}
 	}
 
@@ -275,14 +273,69 @@ func cmdSend(cfg *config.Config, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	for _, p := range fs.Args() {
-		if err := sendOne(ctx, cfg, cl, t, p); err != nil {
+		send := sendOne
+		if st, _ := os.Stat(p); st.IsDir() {
+			send = sendFolder
+		}
+		if err := send(ctx, cfg, cl, t, p); err != nil {
 			return fmt.Errorf("send %s to %s: %w", filepath.Base(p), t.name, err)
 		}
 	}
 	return nil
 }
 
+// sendFolder sends a folder's files one by one. Running the same command
+// again skips files the device already has and resumes the one that was
+// interrupted.
+func sendFolder(ctx context.Context, cfg *config.Config, cl *client.Client, t target, root string) error {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	entries, total, err := node.ListFolder(abs)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return errors.New("the folder has no files")
+	}
+	fid, run := client.FolderID(cfg.ID, abs), node.NewRunID()
+	fmt.Fprintf(os.Stderr, "%s: %d files, %s\n", filepath.Base(abs), len(entries), humanBytes(total))
+
+	status, errText := node.StatusDone, ""
+	defer func() {
+		cl.FolderEnd(context.WithoutCancel(ctx), t.addr, t.fp, proto.FolderEnd{FolderID: fid, Status: status, Error: errText})
+	}()
+	skipped := 0
+	for i, e := range entries {
+		h := client.FileHeader{FolderID: fid, FolderRun: run, FolderSize: total, FolderFiles: len(entries), RelPath: e.Rel}
+		label := fmt.Sprintf("[%d/%d] %s", i+1, len(entries), e.Rel)
+		err := sendPath(ctx, cfg, cl, t, e.Path, label, h)
+		if errors.Is(err, client.ErrAlreadyReceived) {
+			skipped++
+			continue
+		}
+		if err != nil {
+			status, errText = node.StatusFailed, err.Error()
+			if ctx.Err() != nil {
+				status = node.StatusCanceled
+			}
+			return fmt.Errorf("%s: %w", e.Rel, err)
+		}
+	}
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "%d files were already there from an earlier attempt\n", skipped)
+	}
+	return nil
+}
+
 func sendOne(ctx context.Context, cfg *config.Config, cl *client.Client, t target, path string) error {
+	return sendPath(ctx, cfg, cl, t, path, filepath.Base(path), client.FileHeader{})
+}
+
+// sendPath sends one file with a progress line labeled label. h may carry
+// folder fields.
+func sendPath(ctx context.Context, cfg *config.Config, cl *client.Client, t target, path, label string, h client.FileHeader) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -293,7 +346,6 @@ func sendOne(ctx context.Context, cfg *config.Config, cl *client.Client, t targe
 		return err
 	}
 
-	base := filepath.Base(path)
 	var start, last time.Time
 	var startDone int64 = -1
 	progress := func(done int64) {
@@ -309,19 +361,20 @@ func sendOne(ctx context.Context, cfg *config.Config, cl *client.Client, t targe
 			pct = float64(done) * 100 / float64(st.Size())
 		}
 		rate := float64(done-startDone) / max(time.Since(start).Seconds(), 0.001)
-		fmt.Fprintf(os.Stderr, "\r%s  %5.1f%%  %s / %s  %s/s   ", base, pct, humanBytes(done), humanBytes(st.Size()), humanBytes(int64(rate)))
+		fmt.Fprintf(os.Stderr, "\r%s  %5.1f%%  %s / %s  %s/s   ", label, pct, humanBytes(done), humanBytes(st.Size()), humanBytes(int64(rate)))
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	h := client.FileHeader{
-		FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, Name: base, Size: st.Size(),
-		// Same id each run, so running the command again resumes.
-		TransferID: client.TransferID(cfg.ID, abs, st.Size(), st.ModTime()),
-	}
+	h.FromID, h.FromName, h.FromPort = cfg.ID, cfg.Name, cfg.Port
+	h.Name, h.Size = filepath.Base(path), st.Size()
+	// Same id each run, so running the command again resumes.
+	h.TransferID = client.TransferID(cfg.ID, abs, st.Size(), st.ModTime())
 	err = cl.SendFile(ctx, t.addr, t.fp, h, f, progress)
-	fmt.Fprintln(os.Stderr)
+	if !errors.Is(err, client.ErrAlreadyReceived) {
+		fmt.Fprintln(os.Stderr)
+	}
 	return err
 }
 

@@ -5,11 +5,15 @@
   let { m, progress, onCancel, onOpen, onReveal, onRetry } = $props()
 
   let f = $derived(m.file)
-  let kind = $derived(fileKind(f.name))
+  let kind = $derived(f.folder ? 'folder' : fileKind(f.name))
   let pct = $derived(f.size && progress ? Math.min(100, (progress.done / f.size) * 100) : 0)
   // Pictures show inline once there is a local copy: always for files we
   // sent, and for received ones when they have finished.
-  let showImage = $derived(kind === 'image' && f.path && (!m.incoming || f.status === 'done'))
+  let showImage = $derived(!f.folder && kind === 'image' && f.path && (!m.incoming || f.status === 'done'))
+
+  // "3 of 120 files · " for folders that stopped partway.
+  let filesPrefix = $derived(f.folder && f.files ? `${f.doneFiles ?? 0} of ${f.files} files · ` : '')
+  let filesLabel = $derived(f.folder && f.files ? `${f.files} ${f.files === 1 ? 'file' : 'files'} · ` : '')
   let imageFailed = $state(false)
 
   function eta(p) {
@@ -40,15 +44,19 @@
         {:else if progress}
           <span>{fmtSize(progress.done)} / {fmtSize(f.size)}</span>
           <span>{progress.rate ? `${fmtSize(progress.rate)}/s · ${eta(progress)}` : 'Resuming…'}</span>
+        {:else if f.folder && !f.files}
+          <span>Folder</span>
+          <span>{m.incoming ? 'Starting…' : 'Waiting…'}</span>
         {:else}
           <span>{fmtSize(f.size)}</span>
           <span>{m.incoming ? 'Starting…' : 'Waiting…'}</span>
         {/if}
       </div>
+      {#if f.folder && f.files}<div class="file-count">{f.doneFiles ?? 0} of {f.files} files</div>{/if}
       {#if f.error}<div class="retrying"><Icon name="refresh" size={12} /> {f.error}</div>{/if}
     {:else}
       <div class="file-sub">
-        <span>{fmtSize(f.size)}</span>
+        <span>{f.status === 'done' ? filesLabel : filesPrefix}{fmtSize(f.size)}</span>
         {#if f.status === 'done'}
           <span class="chip ok"><Icon name="check" size={12} stroke={3} /> {m.incoming ? 'Received' : 'Sent'}</span>
         {:else if f.status === 'canceled'}

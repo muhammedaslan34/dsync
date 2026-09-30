@@ -46,7 +46,9 @@ Your Wi-Fi must be set to a *Private* network on Windows.
 ## Usage
 
 Open **dsync-gui** on both computers. They find each other automatically and show up
-in the sidebar; pick one and type, or drag files onto the window (or use 📎) to send them. Received
+in the sidebar; pick one and type, or drag files and folders onto the window (or use 📎 → Files… /
+Folder…) to send them. A folder shows as one item with overall progress and is recreated
+with its subfolders on the other side (symlinks and empty folders are skipped). Received
 files go to `~/Downloads/dsync` by default; change it at the bottom of the sidebar.
 Enter sends, Shift+Enter adds a new line, and every
 message has a Copy button. Open **Settings** (the sliders icon, or click your own device card) to rename this computer, see its addresses, change the received-files folder or switch between light and dark themes.
@@ -66,7 +68,7 @@ click one to open it.
 
 Interrupted transfers resume where they stopped: if the connection drops, the sender keeps
 retrying for a few minutes, and a failed file has a **Retry** button (or run the same
-`dsync send` again). The receiver keeps partial files as hidden `.dsync-*.part` files in
+`dsync send` again); for a folder, files that already arrived are skipped. The receiver keeps partial files as hidden `.dsync-*.part` files in
 the download folder until the transfer finishes; unused ones are deleted after a week.
 The checksum always covers the whole file, so a resumed file is verified the same way.
 
@@ -80,6 +82,7 @@ dsync text "hello"                # send text (auto-picks the device if there is
 dsync text --to MyPC "hello"      # pick a device by name
 cat notes.txt | dsync text        # send text from stdin
 dsync send --to MyPC a.zip b.iso  # send files with a progress bar
+dsync send --to MyPC ~/Photos     # send a folder (run again to resume)
 dsync text --addr 100.64.0.2 "hi" # skip discovery
 dsync pair --to MyPC              # pair (confirm the code on both screens)
 ```
@@ -108,5 +111,5 @@ command line, use `dsync pair --to NAME`.)
 1. ✅ Discovery + text, desktop app
 2. ✅ File transfer (streaming, progress, checksum, cancel)
 3. ✅ Pairing + TLS 1.3
-4. Resume (✅), clipboard sync, folders
+4. ✅ Resume, paste to send, folders
 5. `dsync control` (launch Moonlight), tray GUI, Tailscale

@@ -30,6 +30,7 @@ func (n *Node) handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/text", n.paired(n.handleText))
 	mux.HandleFunc("POST /api/v1/file", n.paired(n.receiveFile))
 	mux.HandleFunc("POST /api/v1/file/offset", n.paired(n.handleFileOffset))
+	mux.HandleFunc("POST /api/v1/folder/end", n.paired(n.handleFolderEnd))
 	return mux
 }
 

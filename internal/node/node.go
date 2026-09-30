@@ -81,6 +81,8 @@ type Node struct {
 	pending   map[string]*pendingPair       // incoming pair requests by request id
 	pairing   map[string]context.CancelFunc // outgoing pair requests by peer id
 	parts     map[string]*partClaim         // partial files being written, by path
+	// folderReps are progress callbacks of incoming folders, by message id.
+	folderReps map[int64]func(int64)
 }
 
 // New loads (or creates) this device's identity and history.
@@ -94,11 +96,12 @@ func New(cfg *config.Config, emit func(event string, data any)) (*Node, error) {
 	}
 	n := &Node{
 		cfg: cfg, id: id, cl: client.New(id), emit: emit,
-		peers:     map[string]*Peer{},
-		transfers: map[int64]context.CancelCauseFunc{},
-		pending:   map[string]*pendingPair{},
-		pairing:   map[string]context.CancelFunc{},
-		parts:     map[string]*partClaim{},
+		peers:      map[string]*Peer{},
+		transfers:  map[int64]context.CancelCauseFunc{},
+		pending:    map[string]*pendingPair{},
+		pairing:    map[string]context.CancelFunc{},
+		parts:      map[string]*partClaim{},
+		folderReps: map[int64]func(int64){},
 	}
 	n.loadHistory()
 	return n, nil

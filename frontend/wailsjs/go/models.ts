@@ -28,6 +28,12 @@ export namespace node {
 	    status: string;
 	    error?: string;
 	    transferId?: string;
+	    folder?: boolean;
+	    files?: number;
+	    doneFiles?: number;
+	    doneBytes?: number;
+	    folderId?: string;
+	    run?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FileInfo(source);
@@ -41,6 +47,12 @@ export namespace node {
 	        this.status = source["status"];
 	        this.error = source["error"];
 	        this.transferId = source["transferId"];
+	        this.folder = source["folder"];
+	        this.files = source["files"];
+	        this.doneFiles = source["doneFiles"];
+	        this.doneBytes = source["doneBytes"];
+	        this.folderId = source["folderId"];
+	        this.run = source["run"];
 	    }
 	}
 	export class Message {
