@@ -3,7 +3,7 @@
 All notable changes to dsync. Downloads for every version are on the
 [releases page](https://github.com/muhammedaslan34/dsync/releases).
 
-## Unreleased
+## 1.0.12 — 2026-10-01
 
 - **Phone to phone:** on one phone tap *Connect a phone* to show a QR code, and scan it
   from the other phone. Both then send text, photos and files to each other, encrypted,
