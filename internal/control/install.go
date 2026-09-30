@@ -61,9 +61,12 @@ func Install(ctx context.Context, program string) error {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		return fmt.Errorf("installing %s failed: %s", program, strings.TrimSpace(lines[len(lines)-1]))
 	}
-	if program == "sunshine" && runtimeOS == "linux" && unitExists("sunshine.service") {
-		// Start it at login from now on, like on Windows where it's a service.
-		exec.Command("systemctl", "--user", "enable", "--now", "sunshine").Run()
+	if program == "sunshine" && runtimeOS == "linux" {
+		if unit := SunshineUnit(); unit != "" {
+			// Start it now and at every login, like on Windows where it's a
+			// service.
+			exec.Command("systemctl", "--user", "enable", "--now", unit).Run()
+		}
 	}
 	return nil
 }

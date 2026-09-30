@@ -86,6 +86,10 @@ export function OpenPath(arg1) {
   return window['go']['main']['App']['OpenPath'](arg1);
 }
 
+export function OpenSunshineSetup() {
+  return window['go']['main']['App']['OpenSunshineSetup']();
+}
+
 export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
 }

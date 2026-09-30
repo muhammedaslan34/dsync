@@ -47,6 +47,8 @@ export function MakeNetworkPrivate():Promise<void>;
 
 export function OpenPath(arg1:string):Promise<void>;
 
+export function OpenSunshineSetup():Promise<void>;
+
 export function OpenURL(arg1:string):Promise<void>;
 
 export function Peers():Promise<Array<node.Peer>>;

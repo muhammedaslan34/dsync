@@ -88,11 +88,29 @@ func (n *Node) HostInfo() HostInfo {
 	return h
 }
 
+// StartLocalSunshine starts Sunshine on this computer if it isn't running,
+// e.g. before opening its setup page.
+func (n *Node) StartLocalSunshine() error {
+	if control.SunshineRunning() {
+		return nil
+	}
+	s, ok := control.FindSunshine()
+	if !ok {
+		return errors.New("sunshine is not installed")
+	}
+	return s.Start()
+}
+
 // SetSunshineLogin saves (after checking it works) the Sunshine web UI login
 // that lets paired devices finish remote control setup on their own. An
 // empty user removes it.
 func (n *Node) SetSunshineLogin(ctx context.Context, user, password string) error {
 	if user != "" {
+		if base := n.cfg.SunshineWeb; base == "" {
+			if err := n.StartLocalSunshine(); err != nil {
+				return fmt.Errorf("could not start Sunshine: %w", err)
+			}
+		}
 		n.mu.Lock()
 		base := n.cfg.SunshineWeb
 		n.mu.Unlock()

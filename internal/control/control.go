@@ -122,8 +122,9 @@ func FindSunshine() (Sunshine, bool) {
 	}
 	switch runtimeOS {
 	case "linux":
-		if unitExists("sunshine.service") {
-			s.service = []string{"systemctl", "--user", "start", "sunshine"}
+		if unit := SunshineUnit(); unit != "" {
+			// Start it through its service, never as a second copy.
+			s.service = []string{"systemctl", "--user", "start", unit}
 		} else if s.path == "" && flatpakInstalled("dev.lizardbyte.app.Sunshine") {
 			s.path = "flatpak"
 			s.service = []string{"flatpak", "run", "dev.lizardbyte.app.Sunshine"}
@@ -137,9 +138,13 @@ func FindSunshine() (Sunshine, bool) {
 	return s, s.path != "" || s.service != nil
 }
 
+// SunshineCheckAddr is where SunshineRunning looks for Sunshine; tests
+// point it elsewhere so a real Sunshine on the machine doesn't interfere.
+var SunshineCheckAddr = fmt.Sprintf("127.0.0.1:%d", SunshinePort)
+
 // SunshineRunning reports whether a Sunshine host answers on this computer.
 func SunshineRunning() bool {
-	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", SunshinePort), time.Second)
+	c, err := net.DialTimeout("tcp", SunshineCheckAddr, time.Second)
 	if err != nil {
 		return false
 	}
@@ -158,6 +163,7 @@ func (s Sunshine) Start() error {
 		cmd = exec.Command(s.service[0], s.service[1:]...)
 	case s.path != "":
 		cmd = exec.Command(s.path)
+		detach(cmd) // keep running if dsync quits
 	default:
 		return errors.New("sunshine is not installed")
 	}
@@ -184,6 +190,20 @@ func flatpakInstalled(id string) bool {
 		return false
 	}
 	return exec.Command("flatpak", "info", id).Run() == nil
+}
+
+// sunshineUnits are the names Sunshine's user service has had: current
+// packages use the app id, older ones "sunshine".
+var sunshineUnits = []string{"app-dev.lizardbyte.app.Sunshine.service", "sunshine.service"}
+
+// SunshineUnit is the name of Sunshine's systemd user service, or "".
+func SunshineUnit() string {
+	for _, u := range sunshineUnits {
+		if unitExists(u) {
+			return u
+		}
+	}
+	return ""
 }
 
 func unitExists(unit string) bool {

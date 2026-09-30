@@ -7,7 +7,7 @@
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
     firewall, onFixFirewall, onMakePrivate,
-    updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram,
+    updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram, onSunshineSetup,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -211,7 +211,7 @@
           </div>
         {:else if !hostInfo.sunshineLogin}
           <div class="rc-install">
-            <button class="btn secondary sm" onclick={() => onOpenURL(hostInfo.sunshineUrl)}>Open Sunshine setup</button>
+            <button class="btn secondary sm" onclick={onSunshineSetup}>Open Sunshine setup</button>
             <span class="muted small">Choose Sunshine's username and password there (first time only).</span>
           </div>
         {/if}
@@ -225,7 +225,7 @@
         {:else}
           <form class="rc-login" onsubmit={saveSunshine}>
             <p class="muted small">
-              Optional: save the login you set in <button type="button" class="text-btn" onclick={() => onOpenURL(hostInfo.sunshineUrl)}>Sunshine's web page</button>
+              Optional: save the login you set in <button type="button" class="text-btn" onclick={onSunshineSetup}>Sunshine's web page</button>
               so paired devices can set up remote control without you entering a PIN here.
             </p>
             <div class="input-row">

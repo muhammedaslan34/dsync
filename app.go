@@ -286,3 +286,13 @@ func (a *App) FixFirewall() error { return fixFirewall() }
 // MakeNetworkPrivate sets the connected Public networks to Private (with the
 // admin prompt), so the firewall rules apply.
 func (a *App) MakeNetworkPrivate() error { return makeNetworkPrivate() }
+
+// OpenSunshineSetup starts Sunshine here if needed and opens its web page,
+// where its username and password are set.
+func (a *App) OpenSunshineSetup() error {
+	if err := a.node.StartLocalSunshine(); err != nil {
+		return err
+	}
+	wruntime.BrowserOpenURL(a.ctx, a.node.HostInfo().SunshineURL)
+	return nil
+}

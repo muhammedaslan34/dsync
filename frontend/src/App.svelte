@@ -6,7 +6,7 @@
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version,
-    FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram,
+    FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -666,6 +666,10 @@
     onCheckUpdate={checkUpdate}
     onInstallUpdate={installUpdate}
     onInstallProgram={installProgram}
+    onSunshineSetup={() => run(async () => {
+      await OpenSunshineSetup()
+      hostInfo = await HostInfo()
+    })}
     onFixFirewall={() => fixFirewall(FixFirewall, 'dsync is now allowed through Windows Firewall')}
     onMakePrivate={() => fixFirewall(MakeNetworkPrivate, 'Your network is now set to Private')}
     onSunshineLogin={async (user, pw) => {

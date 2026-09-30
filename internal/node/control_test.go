@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -48,7 +49,20 @@ exit 0
 	if withSunshine {
 		os.WriteFile(filepath.Join(f.dir, "sunshine"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
 	}
-	t.Setenv("PATH", f.dir+string(os.PathListSeparator)+"/usr/bin:/bin")
+	// Only the fakes and the few tools the scripts use: a real Moonlight or
+	// Sunshine installed on this machine must not be found.
+	tools := filepath.Join(f.dir, "tools")
+	os.Mkdir(tools, 0o755)
+	for _, tool := range []string{"sh", "seq", "sleep"} {
+		if p, err := exec.LookPath(tool); err == nil {
+			os.Symlink(p, filepath.Join(tools, tool))
+		}
+	}
+	t.Setenv("PATH", f.dir+string(os.PathListSeparator)+tools)
+	// Not running unless the test starts a fake one.
+	old := control.SunshineCheckAddr
+	control.SunshineCheckAddr = "127.0.0.1:1"
+	t.Cleanup(func() { control.SunshineCheckAddr = old })
 
 	// Sunshine's web API: accepts the PIN only if it is the one Moonlight
 	// is pairing with, which marks the pair as done.
@@ -97,14 +111,16 @@ func (f *controlFakes) calls() string {
 	return string(b)
 }
 
-// sunshineUp pretends Sunshine is running here by listening on its port.
+// sunshineUp pretends Sunshine is running here by listening where
+// SunshineRunning looks.
 func sunshineUp(t *testing.T) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:47989")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skip("port 47989 is busy (a real Sunshine running?)")
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
+	control.SunshineCheckAddr = ln.Addr().String()
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -247,9 +263,6 @@ func TestControlMissingPrograms(t *testing.T) {
 		}
 	})
 	t.Run("no sunshine there", func(t *testing.T) {
-		if control.SunshineRunning() {
-			t.Skip("a Sunshine is running on this computer")
-		}
 		newControlFakes(t, true, false)
 		a, b, la, _ := controlPair(t)
 		a.peers[b.cfg.ID].OS = "windows"
