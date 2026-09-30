@@ -1,6 +1,7 @@
 // Paired computers, kept in the phone's secure storage (Keychain / Keystore).
 // One entry per computer plus an index, so each value stays small.
 import * as SecureStore from 'expo-secure-store';
+import nacl from 'tweetnacl';
 import type { Computer } from './dsync';
 
 const INDEX_KEY = 'dsync.computers';
@@ -69,4 +70,20 @@ export async function saveLanguage(value: string): Promise<void> {
   } catch {
     // not saved: the choice still applies until the app restarts
   }
+}
+
+const DEVICE_ID_KEY = 'dsync.deviceId';
+
+/** This phone's own id, made once (another phone knows it by this id). */
+export async function loadDeviceId(): Promise<string> {
+  try {
+    const id = await SecureStore.getItemAsync(DEVICE_ID_KEY);
+    if (id) return id;
+  } catch {}
+  const bytes = nacl.randomBytes(8);
+  const id = 'phone-' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  try {
+    await SecureStore.setItemAsync(DEVICE_ID_KEY, id);
+  } catch {}
+  return id;
 }

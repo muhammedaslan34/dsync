@@ -10,8 +10,8 @@
       "bundleIdentifier": "io.github.muhammedaslan34.dsync",
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "dsync uses the camera to scan the pairing code shown on your computer.",
-        "NSLocalNetworkUsageDescription": "dsync talks to dsync on your computers over the local network.",
+        "NSCameraUsageDescription": "dsync uses the camera to scan the pairing code shown on your computer or another phone.",
+        "NSLocalNetworkUsageDescription": "dsync talks to dsync on your computers and other phones over the local network.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
           "NSAllowsArbitraryLoads": true
@@ -42,7 +42,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "dsync uses the camera to scan the pairing code shown on your computer.",
+          "cameraPermission": "dsync uses the camera to scan the pairing code shown on your computer or another phone.",
           "recordAudioAndroid": false
         }
       ],

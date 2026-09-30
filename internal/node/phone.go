@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -56,6 +57,9 @@ type phoneUpload struct {
 	file     *os.File
 	msgID    int64
 	touched  time.Time
+	// resumable uploads (the phone sent a transferId) keep their .part file
+	// when interrupted, so the phone can continue where it stopped.
+	resumable bool
 }
 
 type phoneState struct {
@@ -351,16 +355,21 @@ func (n *Node) phoneText(ph config.Phone, raw json.RawMessage) phoneReply {
 
 func (n *Node) phoneUploadStart(ph config.Phone, raw json.RawMessage) phoneReply {
 	var req struct {
-		Name string `json:"name"`
-		Size int64  `json:"size"`
+		Name       string `json:"name"`
+		Size       int64  `json:"size"`
+		TransferID string `json:"transferId"` // optional: makes the upload resumable
 	}
-	if json.Unmarshal(raw, &req) != nil || req.Size < 0 {
+	if json.Unmarshal(raw, &req) != nil || req.Size < 0 || (req.TransferID != "" && !validTransferID(req.TransferID)) {
 		return fail(http.StatusBadRequest, "bad request")
 	}
 	n.dropIdleUploads()
 	dir := n.ReceiveDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(http.StatusInternalServerError, "cannot create the download folder")
+	}
+	name := safeFileName(req.Name)
+	if req.TransferID != "" {
+		return n.phoneUploadResume(ph, name, req.Size, req.TransferID)
 	}
 	if free, err := freeSpace(dir); err == nil && free < req.Size+diskReserve {
 		return fail(http.StatusInsufficientStorage, fmt.Sprintf("not enough disk space on %s", n.Self().Name))
@@ -369,14 +378,90 @@ func (n *Node) phoneUploadStart(ph config.Phone, raw json.RawMessage) phoneReply
 	if err != nil {
 		return fail(http.StatusInternalServerError, "cannot create the file")
 	}
-	name := safeFileName(req.Name)
 	m := n.addMessage(Message{PeerID: ph.ID, PeerName: ph.Name, Incoming: true,
 		File: &FileInfo{Name: name, Size: req.Size, Status: StatusActive}})
 	id := randomHex(12)
 	n.phones.mu.Lock()
 	n.phones.uploads[id] = &phoneUpload{phoneID: ph.ID, name: name, size: req.Size, file: f, msgID: m.ID, touched: time.Now()}
 	n.phones.mu.Unlock()
-	return ok(map[string]any{"uploadId": id, "chunkSize": phoneChunkSize})
+	return ok(map[string]any{"uploadId": id, "chunkSize": phoneChunkSize, "offset": 0})
+}
+
+// resumableUploadID is the upload id of a phone's resumable upload: the same
+// for the same phone and transfer, so a restarted upload finds its data.
+func resumableUploadID(phoneID, tid string) string {
+	sum := sha256.Sum256([]byte(phoneID + "/phone/" + tid))
+	return "r" + hex.EncodeToString(sum[:15])
+}
+
+// phoneUploadResume starts or continues an upload the phone can resume. The
+// data goes to a .part file named after the phone and transfer id; if one is
+// there (the phone was closed, or the computer restarted), the reply's
+// offset says how much of the file the computer already has.
+func (n *Node) phoneUploadResume(ph config.Phone, name string, size int64, tid string) phoneReply {
+	id := resumableUploadID(ph.ID, tid)
+	n.phones.mu.Lock()
+	if u := n.phones.uploads[id]; u != nil && u.phoneID == ph.ID {
+		if u.size == size {
+			u.touched = time.Now()
+			got := u.received
+			n.phones.mu.Unlock()
+			n.updateFile(u.msgID, func(f *FileInfo) { f.Status, f.Error = StatusActive, "" })
+			return ok(map[string]any{"uploadId": id, "chunkSize": phoneChunkSize, "offset": got})
+		}
+		// Same id, different file: start over.
+		delete(n.phones.uploads, id)
+		u.file.Close()
+	}
+	n.phones.mu.Unlock()
+
+	part := n.partPath(ph.ID, "phone/"+tid)
+	f, err := os.OpenFile(part, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fail(http.StatusInternalServerError, "cannot create the file")
+	}
+	have := int64(0)
+	if st, err := f.Stat(); err == nil {
+		have = st.Size()
+	}
+	if have > size {
+		have = 0
+	}
+	if err := f.Truncate(have); err != nil {
+		f.Close()
+		return fail(http.StatusInternalServerError, err.Error())
+	}
+	if _, err := f.Seek(have, io.SeekStart); err != nil {
+		f.Close()
+		return fail(http.StatusInternalServerError, err.Error())
+	}
+	if free, err := freeSpace(n.ReceiveDir()); err == nil && free < size-have+diskReserve {
+		f.Close()
+		return fail(http.StatusInsufficientStorage, fmt.Sprintf("not enough disk space on %s", n.Self().Name))
+	}
+
+	// Keep showing the same message in the conversation.
+	var msgID int64
+	for _, m := range n.History() {
+		if m.PeerID == ph.ID && m.Incoming && m.File != nil && m.File.TransferID == tid {
+			msgID = m.ID
+		}
+	}
+	if msgID != 0 {
+		n.updateFile(msgID, func(fi *FileInfo) { fi.Status, fi.Error, fi.Name, fi.Size = StatusActive, "", name, size })
+	} else {
+		m := n.addMessage(Message{PeerID: ph.ID, PeerName: ph.Name, Incoming: true,
+			File: &FileInfo{Name: name, Size: size, Status: StatusActive, TransferID: tid}})
+		msgID = m.ID
+	}
+	u := &phoneUpload{phoneID: ph.ID, name: name, size: size, received: have, file: f, msgID: msgID, touched: time.Now(), resumable: true}
+	n.phones.mu.Lock()
+	n.phones.uploads[id] = u
+	n.phones.mu.Unlock()
+	if have > 0 {
+		n.emit(EventProgress, Progress{ID: msgID, Done: have})
+	}
+	return ok(map[string]any{"uploadId": id, "chunkSize": phoneChunkSize, "offset": have})
 }
 
 func (n *Node) upload(ph config.Phone, id string) *phoneUpload {
@@ -469,6 +554,11 @@ func (n *Node) dropIdleUploads() {
 	n.phones.mu.Unlock()
 	for _, u := range stale {
 		u.file.Close()
+		if u.resumable {
+			// Keep the .part file: the phone continues from it when it's back.
+			n.updateFile(u.msgID, func(f *FileInfo) { f.Status, f.Error = StatusFailed, errInterrupted.Error() })
+			continue
+		}
 		os.Remove(u.file.Name())
 		n.updateFile(u.msgID, func(f *FileInfo) { f.Status, f.Error = StatusFailed, "the phone stopped sending" })
 	}

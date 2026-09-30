@@ -7,6 +7,7 @@ import { EMPTY_THREAD, isOnline, pollOnce, useStore, type Thread } from '../stor
 import { useTheme } from '../theme';
 import { type I18n, side, useDirection, useI18n } from '../i18n';
 import { Avatar, Button, Header, Icon, IconButton, Logo, useForeground, useInterval, useNow } from '../components/ui';
+import { useUpdate } from '../update';
 
 function preview(t: I18n['t'], m: Message | undefined): string {
   if (!m) return '';
@@ -19,6 +20,7 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
   const { t: tr } = useI18n();
   const { isRTL, row: dirRow, start } = useDirection();
   const insets = useSafeAreaInsets();
+  const update = useUpdate();
   const computers = useStore((s) => s.computers);
   const threads = useStore((s) => s.threads);
   const foreground = useForeground();
@@ -64,6 +66,16 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
         title={<Text style={[s.brand, { color: t.text, textAlign: start }]}>dsync</Text>}
         right={<IconButton icon="settings-outline" label={tr('common.settings')} onPress={() => nav.go({ name: 'app' })} />}
       />
+      {update.kind === 'available' ? (
+        <Pressable
+          onPress={() => nav.go({ name: 'app' })}
+          style={({ pressed }) => [s.update, { flexDirection: dirRow, backgroundColor: t.accentSoft, opacity: pressed ? 0.8 : 1 }]}
+        >
+          <Icon name="arrow-up-circle" size={20} color={t.accent} />
+          <Text style={[s.updateText, { color: t.accent, textAlign: start }]}>{tr('list.updateBanner', { version: update.release.version })}</Text>
+          <Text style={[s.updateAction, { color: t.accent }]}>{tr('list.updateAction')}</Text>
+        </Pressable>
+      ) : null}
       {computers.length === 0 ? (
         <View style={s.empty}>
           <View style={[s.pulse, { backgroundColor: t.accentSoft }]}>
@@ -85,8 +97,9 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
           }
         />
       )}
-      <View style={{ padding: 16, paddingBottom: insets.bottom + 16 }}>
-        <Button title={tr('list.connect')} icon="qr-code-outline" onPress={() => nav.go({ name: 'scan' })} />
+      <View style={{ padding: 16, paddingBottom: insets.bottom + 16, gap: 10 }}>
+        <Button title={tr('list.connect')} icon="scan-outline" onPress={() => nav.go({ name: 'scan' })} />
+        <Button title={tr('list.connectPhone')} kind="secondary" icon="qr-code-outline" onPress={() => nav.go({ name: 'hostPair' })} />
       </View>
     </View>
   );
@@ -94,6 +107,9 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
 
 const s = StyleSheet.create({
   brand: { fontSize: 19, fontWeight: '700', letterSpacing: -0.2 },
+  update: { alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 12, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
+  updateText: { flex: 1, fontSize: 14, fontWeight: '500' },
+  updateAction: { fontSize: 14, fontWeight: '700' },
   label: { fontSize: 11, fontWeight: '600', letterSpacing: 0.7, marginBottom: 2 },
   // Letter spacing breaks up joined Arabic letters.
   labelArabic: { letterSpacing: 0, fontSize: 12 },

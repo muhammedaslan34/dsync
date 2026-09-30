@@ -16,6 +16,9 @@ import {
 } from './dsync';
 import { safeFileName } from './format';
 import * as storage from './storage';
+import nacl from 'tweetnacl';
+import { AppState } from 'react-native';
+import { ensureHost, hostForget, hostSendFile, hostSendText, loadHostedConversations, setHostBridge } from './host';
 
 export const ONLINE_WINDOW_MS = 6000;
 const SYNC_PAGE = 200;
@@ -32,6 +35,7 @@ export interface Thread {
 export interface Pending {
   key: string;
   kind: 'text' | 'file';
+  transferId?: string; // files: lets the computer keep what arrived, to resume
   text?: string;
   uri?: string;
   name?: string;
@@ -44,6 +48,8 @@ export interface Pending {
 
 export interface Download {
   busy: boolean;
+  wanted?: boolean; // started and not finished: resumes when the computer is reachable
+  name?: string;
   got: number;
   size: number;
   error?: unknown; // shown with describeError
@@ -70,7 +76,7 @@ export function getState(): State {
   return state;
 }
 
-function subscribe(l: () => void) {
+export function subscribe(l: () => void) {
   listeners.add(l);
   return () => listeners.delete(l);
 }
@@ -111,7 +117,28 @@ function mergeMessages(list: Message[], add: Message[]): Message[] {
 export async function loadComputers() {
   const computers = await storage.loadComputers();
   setState((s) => ({ ...s, ready: true, computers }));
+  loadHostedConversations();
+  restoreTransfers();
 }
+
+// Phones that paired with this one by scanning its code (see host.ts).
+setHostBridge({
+  computers: () => state.computers,
+  addPeer: async (c) => {
+    await addComputer(c);
+  },
+  removePeer: (id) => forgetComputer(id, true),
+  changed: (id, messages, lastSeen) => {
+    if (!getComputer(id)) return;
+    patchThread(id, (t) => ({
+      messages,
+      maxId: messages.length ? messages[messages.length - 1].id : 0,
+      loaded: true,
+      lastOk: lastSeen || t.lastOk,
+      error: null,
+    }));
+  },
+});
 
 export function getComputer(cid: string): Computer | undefined {
   return state.computers.find((c) => c.id === cid);
@@ -143,7 +170,10 @@ export async function addComputer(c: Computer) {
 export async function forgetComputer(cid: string, force = false) {
   const c = getComputer(cid);
   if (!c) return;
-  if (!force) {
+  if (c.hosted) {
+    // It connects to this phone: it finds out it's forgotten on its next request.
+    hostForget(cid);
+  } else if (!force) {
     try {
       await new PhoneClient(c).unpair();
     } catch (e) {
@@ -159,6 +189,8 @@ export async function forgetComputer(cid: string, force = false) {
     delete pending[cid];
     return { ...s, computers: s.computers.filter((x) => x.id !== cid), threads, pending };
   });
+  for (const [k, d] of wantedDownloads) if (d.cid === cid) wantedDownloads.delete(k);
+  saveTransfers();
 }
 
 function candidates(c: Computer): string[] {
@@ -179,7 +211,7 @@ const inflight = new Set<string>();
 /** One /sync round for a computer; fetches every page of new messages. */
 export async function pollOnce(cid: string) {
   const c = getComputer(cid);
-  if (!c || inflight.has(cid)) return;
+  if (!c || c.hosted || inflight.has(cid)) return; // hosted: it polls this phone instead
   inflight.add(cid);
   const client = clientFor(c);
   try {
@@ -203,6 +235,7 @@ export async function pollOnce(cid: string) {
       error: null,
       addrIdx: 0,
     }));
+    resumeTransfers(cid);
     const cur = getComputer(cid)!;
     const changed =
       cur.address !== client.address ||
@@ -244,20 +277,23 @@ function delivered(cid: string, key: string, m: Message | undefined) {
   if (m && typeof m.id === 'number') patchThread(cid, (t) => ({ messages: mergeMessages(t.messages, [m]) }));
 }
 
+const running = new Set<string>();
+
 async function run(cid: string, key: string) {
   const c = getComputer(cid);
   const p = (state.pending[cid] ?? []).find((x) => x.key === key);
-  if (!c || !p) return;
-  patchPending(cid, key, { status: 'sending', error: undefined, sent: 0 });
+  if (!c || !p || running.has(key)) return;
+  running.add(key);
+  patchPending(cid, key, { status: 'sending', error: undefined });
   const client = clientFor(c);
   try {
     if (p.kind === 'text') {
       delivered(cid, key, await client.sendText(p.text ?? ''));
     } else {
-      let last = 0;
-      const m = await client.upload({ uri: p.uri!, name: p.name! }, (sent, size) => {
+      let last = -1;
+      const m = await client.upload({ uri: p.uri!, name: p.name!, transferId: p.transferId }, (sent, size) => {
         // Don't re-render more often than needed.
-        if (sent === size || sent - last >= size / 100) {
+        if (last < 0 || sent === size || Math.abs(sent - last) >= size / 100) {
           last = sent;
           patchPending(cid, key, { sent, size });
         }
@@ -266,16 +302,25 @@ async function run(cid: string, key: string) {
     }
   } catch (e) {
     patchPending(cid, key, { status: 'failed', error: e });
+  } finally {
+    running.delete(key);
+    saveTransfers();
   }
 }
 
+function newTransferId(): string {
+  return Array.from(nacl.randomBytes(16), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function sendText(cid: string, text: string) {
+  if (getComputer(cid)?.hosted) return hostSendText(cid, text);
   const key = `p${++seq}`;
   addPending(cid, { key, kind: 'text', text, size: text.length, sent: 0, status: 'sending', time: Date.now() });
   void run(cid, key);
 }
 
 export function sendFile(cid: string, file: { uri: string; name: string; size?: number }) {
+  if (getComputer(cid)?.hosted) return hostSendFile(cid, file);
   const key = `p${++seq}`;
   let size = file.size ?? 0;
   try {
@@ -286,6 +331,7 @@ export function sendFile(cid: string, file: { uri: string; name: string; size?: 
   addPending(cid, {
     key,
     kind: 'file',
+    transferId: newTransferId(),
     uri: file.uri,
     name: file.name,
     size,
@@ -293,6 +339,7 @@ export function sendFile(cid: string, file: { uri: string; name: string; size?: 
     status: 'sending',
     time: Date.now(),
   });
+  saveTransfers();
   void run(cid, key);
 }
 
@@ -302,6 +349,7 @@ export function retryPending(cid: string, key: string) {
 
 export function dismissPending(cid: string, key: string) {
   patchPending(cid, key, null);
+  saveTransfers();
 }
 
 // ---------- downloads ----------
@@ -317,32 +365,148 @@ function patchDownload(k: string, patch: Partial<Download>) {
   }));
 }
 
-/** Downloads a file the computer sent (if not already cached) and opens the share sheet. */
-export async function saveOrShare(cid: string, m: Message) {
-  const c = getComputer(cid);
-  if (!c || !m.file) return;
-  const k = downloadKey(cid, m.id);
-  const d = state.downloads[k];
-  if (d?.busy) return;
+/** The file a download is saved to (and resumed from). */
+function downloadFile(cid: string, m: Message): File {
   const dir = new Directory(Paths.cache, 'dsync', `${cid.replace(/[^A-Za-z0-9._-]/g, '_')}-${m.id}`);
-  const dest = new File(dir, safeFileName(m.file.name));
+  dir.create({ intermediates: true, idempotent: true });
+  return new File(dir, safeFileName(m.file!.name));
+}
+
+/** Downloads (or finishes downloading) a file the computer sent; true once it's all there. */
+async function fetchFile(cid: string, m: Message): Promise<File | null> {
+  const c = getComputer(cid);
+  if (!c || !m.file) return null;
+  const k = downloadKey(cid, m.id);
+  if (state.downloads[k]?.busy) return null;
+  const dest = downloadFile(cid, m);
+  if (dest.exists && dest.size === m.file.size) {
+    patchDownload(k, { busy: false, wanted: false, uri: dest.uri, got: m.file.size, error: undefined });
+    return dest;
+  }
+  patchDownload(k, { busy: true, wanted: true, name: m.file.name, got: dest.exists ? dest.size ?? 0 : 0, size: m.file.size, error: undefined, uri: undefined });
+  wantedDownloads.set(k, { cid, id: m.id, name: m.file.name, size: m.file.size });
+  saveTransfers();
   try {
-    const cached = d?.uri && dest.exists && dest.size === m.file.size;
-    if (!cached) {
-      patchDownload(k, { busy: true, got: 0, size: m.file.size, error: undefined, uri: undefined });
-      dir.create({ intermediates: true, idempotent: true });
-      let last = 0;
-      await clientFor(c).download(m.id, dest, (got, size) => {
-        if (got >= size || got - last >= size / 100) {
+    let last = -1;
+    await clientFor(c).download(
+      m.id,
+      dest,
+      (got, size) => {
+        if (last < 0 || got >= size || got - last >= size / 100) {
           last = got;
           patchDownload(k, { got, size });
         }
-      });
-      patchDownload(k, { busy: false, uri: dest.uri, got: m.file.size });
-    }
+      },
+      m.file.size,
+    );
+    patchDownload(k, { busy: false, wanted: false, uri: dest.uri, got: m.file.size });
+    wantedDownloads.delete(k);
+    saveTransfers();
+    return dest;
+  } catch (e) {
+    patchDownload(k, { busy: false, error: e });
+    return null;
+  }
+}
+
+/** Downloads a file the computer sent (if not already here) and opens the share sheet. */
+export async function saveOrShare(cid: string, m: Message) {
+  if (!m.file) return;
+  const k = downloadKey(cid, m.id);
+  // From a hosted phone the file is already here.
+  const dest = m.file.uri ? new File(m.file.uri) : await fetchFile(cid, m);
+  if (!dest) return;
+  // Finished while the app was in the background: it waits for a tap instead.
+  if (AppState.currentState !== 'active') return;
+  try {
     if (!(await Sharing.isAvailableAsync())) throw new AppError('errors.noSharing', 'Sharing is not available on this phone');
     await Sharing.shareAsync(dest.uri, { dialogTitle: m.file.name });
   } catch (e) {
-    patchDownload(k, { busy: false, error: e });
+    patchDownload(k, { error: e });
+  }
+}
+
+// ---------- unfinished transfers survive the app being closed ----------
+
+interface SavedTransfers {
+  v: 1;
+  pending: { cid: string; key: string; transferId?: string; uri: string; name: string; size: number; time: number }[];
+  downloads: { cid: string; id: number; name: string; size: number }[];
+}
+
+const wantedDownloads = new Map<string, { cid: string; id: number; name: string; size: number }>();
+
+function transfersFile(): File {
+  return new File(Paths.document, 'dsync-transfers.json');
+}
+
+/** Remembers unfinished file sends and downloads (not their progress: the computer and the file on disk know that). */
+function saveTransfers() {
+  const data: SavedTransfers = { v: 1, pending: [], downloads: [...wantedDownloads.values()] };
+  for (const [cid, list] of Object.entries(state.pending)) {
+    for (const p of list) {
+      if (p.kind === 'file' && p.uri && p.name) {
+        data.pending.push({ cid, key: p.key, transferId: p.transferId, uri: p.uri, name: p.name, size: p.size, time: p.time });
+      }
+    }
+  }
+  try {
+    const f = transfersFile();
+    if (data.pending.length === 0 && data.downloads.length === 0) {
+      if (f.exists) f.delete();
+      return;
+    }
+    f.write(JSON.stringify(data));
+  } catch {
+    // not saved: they still finish while the app stays open
+  }
+}
+
+/** At startup: puts back the transfers that were going when the app closed, and continues them. */
+function restoreTransfers() {
+  let data: SavedTransfers | null = null;
+  try {
+    const f = transfersFile();
+    if (f.exists) data = JSON.parse(f.textSync()) as SavedTransfers;
+  } catch {
+    data = null;
+  }
+  if (!data || data.v !== 1) return;
+  for (const p of data.pending ?? []) {
+    if (!getComputer(p.cid)) continue;
+    const key = `p${++seq}`;
+    addPending(p.cid, {
+      key,
+      kind: 'file',
+      transferId: p.transferId,
+      uri: p.uri,
+      name: p.name,
+      size: p.size,
+      sent: 0,
+      status: 'sending',
+      time: p.time,
+    });
+    void run(p.cid, key);
+  }
+  for (const d of data.downloads ?? []) {
+    if (!getComputer(d.cid)) continue;
+    const k = downloadKey(d.cid, d.id);
+    wantedDownloads.set(k, d);
+    patchDownload(k, { busy: false, wanted: true, size: d.size });
+    void fetchFile(d.cid, { id: d.id, time: 0, fromPhone: false, file: { name: d.name, size: d.size, status: 'done' } });
+  }
+  saveTransfers();
+}
+
+/** Continues what stopped because the computer couldn't be reached, now that it answers. */
+function resumeTransfers(cid: string) {
+  for (const p of state.pending[cid] ?? []) {
+    if (p.kind === 'file' && p.status === 'failed' && p.transferId && isDsyncError(p.error, 'unreachable')) void run(cid, p.key);
+  }
+  for (const d of wantedDownloads.values()) {
+    const cur = state.downloads[downloadKey(d.cid, d.id)];
+    if (d.cid === cid && cur && !cur.busy && (cur.error === undefined || isDsyncError(cur.error, 'unreachable'))) {
+      void fetchFile(d.cid, { id: d.id, time: 0, fromPhone: false, file: { name: d.name, size: d.size, status: 'done' } });
+    }
   }
 }

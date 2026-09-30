@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Nav } from '../../App';
-import { describeError } from '../dsync';
+import { describeError, isPhoneOS } from '../dsync';
 import { dayLabel, fmtTime, osLabel } from '../format';
 import { EMPTY_THREAD, forgetComputer, isOnline, pollOnce, useStore } from '../store';
 import { type Theme, mono, useTheme } from '../theme';
@@ -35,6 +35,7 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
   if (!computer) return null;
   const online = isOnline(thread, now);
   const others = computer.addresses.filter((a) => a !== computer.address);
+  const isPhone = isPhoneOS(computer.os);
 
   const done = () => nav.go({ name: 'list' });
 
@@ -47,7 +48,7 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
       setBusy(false);
       Alert.alert(
         tr('computer.unreachableTitle'),
-        tr('computer.unreachableText', { error: describeError(e) }),
+        tr('computer.unreachableText', { error: describeError(e), name: computer.name }),
         [
           { text: tr('common.cancel'), style: 'cancel' },
           {
@@ -64,7 +65,7 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
   };
 
   const confirmForget = () =>
-    Alert.alert(tr('computer.confirmTitle', { name: computer.name }), tr('computer.confirmText'), [
+    Alert.alert(tr('computer.confirmTitle', { name: computer.name }), tr('computer.confirmText', { name: computer.name }), [
       { text: tr('common.cancel'), style: 'cancel' },
       { text: tr('computer.confirm'), style: 'destructive', onPress: () => void forget() },
     ]);
@@ -73,7 +74,7 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
     <View style={{ flex: 1 }}>
       <Header
         left={<BackButton onPress={nav.back} />}
-        title={<Text style={[s.headTitle, { color: t.text, textAlign: dir.start }]}>{tr('computer.title')}</Text>}
+        title={<Text style={[s.headTitle, { color: t.text, textAlign: dir.start }]}>{isPhone ? tr('computer.phoneTitle') : tr('computer.title')}</Text>}
       />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: insets.bottom + 24 }}>
         <View style={s.top}>
@@ -88,7 +89,10 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
 
         <Card t={t} style={{ paddingVertical: 4 }}>
           <Row t={t} dir={dir} label={tr('computer.name')} value={computer.name} />
-          <Row t={t} dir={dir} label={tr('computer.address')} value={`${computer.address}:${computer.port}`} monoValue />
+          {/* A phone that scanned this phone's code has no address: it's the one that connects. */}
+          {computer.hosted ? null : (
+            <Row t={t} dir={dir} label={tr('computer.address')} value={`${computer.address}:${computer.port}`} monoValue />
+          )}
           {others.length > 0 ? (
             <Row t={t} dir={dir} label={tr('computer.otherAddresses', { count: others.length })} value={others.join('\n')} monoValue />
           ) : null}
@@ -101,8 +105,8 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
           />
         </Card>
 
-        <Button title={tr('computer.forget')} kind="danger" icon="trash-outline" busy={busy} onPress={confirmForget} />
-        <Text style={[s.note, { color: t.muted }]}>{tr('computer.note')}</Text>
+        <Button title={isPhone ? tr('computer.forgetPhone') : tr('computer.forget')} kind="danger" icon="trash-outline" busy={busy} onPress={confirmForget} />
+        <Text style={[s.note, { color: t.muted }]}>{isPhone ? tr('computer.notePhone') : tr('computer.note')}</Text>
       </ScrollView>
     </View>
   );
