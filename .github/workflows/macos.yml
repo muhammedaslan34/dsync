@@ -35,7 +35,8 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
       - name: Read the version
-        run: echo "VERSION=$(sed -n 's/.*"productVersion": *"\([^"]*\)".*/\1/p' wails.json)" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION=$(sed -n 's/.*"productVersion": *"\([^"]*\)".*/\1/p' wails.json)" >> "$GITHUB_ENV"
 
       - name: Test
         run: go test ./internal/...
