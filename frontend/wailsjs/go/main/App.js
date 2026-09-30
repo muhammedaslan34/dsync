@@ -10,6 +10,10 @@ export function AnswerPair(arg1, arg2) {
   return window['go']['main']['App']['AnswerPair'](arg1, arg2);
 }
 
+export function Background() {
+  return window['go']['main']['App']['Background']();
+}
+
 export function CancelPair(arg1) {
   return window['go']['main']['App']['CancelPair'](arg1);
 }
@@ -98,8 +102,20 @@ export function SendText(arg1, arg2) {
   return window['go']['main']['App']['SendText'](arg1, arg2);
 }
 
+export function SetAppMenu(arg1) {
+  return window['go']['main']['App']['SetAppMenu'](arg1);
+}
+
+export function SetAutostart(arg1) {
+  return window['go']['main']['App']['SetAutostart'](arg1);
+}
+
 export function SetClipboardSync(arg1) {
   return window['go']['main']['App']['SetClipboardSync'](arg1);
+}
+
+export function SetKeepInTray(arg1) {
+  return window['go']['main']['App']['SetKeepInTray'](arg1);
 }
 
 export function SetName(arg1) {

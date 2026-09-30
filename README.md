@@ -80,6 +80,15 @@ retrying for a few minutes, and a failed file has a **Retry** button (or run the
 the download folder until the transfer finishes; unused ones are deleted after a week.
 The checksum always covers the whole file, so a resumed file is verified the same way.
 
+**Tray icon:** closing the window keeps dsync running in the tray, so it keeps receiving and
+syncing the clipboard. Click the icon to open it again; its menu also toggles clipboard sync
+and quits. Messages and files that arrive while the window is closed show a desktop
+notification, and pairing requests bring the window back. Under Settings → Background you
+can turn this off, start dsync when you log in (it starts in the tray), and on Linux add it to
+the app menu. On GNOME the tray needs the *AppIndicator and KStatusNotifierItem Support*
+extension; without a tray, closing the window quits as before. Opening dsync again while
+it runs brings the running one back.
+
 Only one dsync (app or `dsync serve`) can run per computer, since both use the same ports.
 
 Command-line tool:
@@ -121,4 +130,5 @@ command line, use `dsync pair --to NAME`.)
 3. ✅ Pairing + TLS 1.3
 4. ✅ Resume, paste to send, folders
 5. ✅ Clipboard sync
-6. `dsync control` (launch Moonlight), tray icon
+6. ✅ Tray icon, notifications, start at login
+7. `dsync control` (launch Moonlight)

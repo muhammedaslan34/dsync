@@ -19,6 +19,33 @@ export namespace discovery {
 
 }
 
+export namespace main {
+	
+	export class BackgroundSettings {
+	    trayAvailable: boolean;
+	    keepInTray: boolean;
+	    autostartSupported: boolean;
+	    autostart: boolean;
+	    appMenuSupported: boolean;
+	    appMenu: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BackgroundSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.trayAvailable = source["trayAvailable"];
+	        this.keepInTray = source["keepInTray"];
+	        this.autostartSupported = source["autostartSupported"];
+	        this.autostart = source["autostart"];
+	        this.appMenuSupported = source["appMenuSupported"];
+	        this.appMenu = source["appMenu"];
+	    }
+	}
+
+}
+
 export namespace node {
 	
 	export class ClipboardStatus {

@@ -435,3 +435,44 @@ func (n *Node) FindOnNetwork(ctx context.Context) []Peer {
 	}
 	return out
 }
+
+// QuitOnClose reports whether closing the window quits instead of keeping
+// dsync running in the tray.
+func (n *Node) QuitOnClose() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.cfg.QuitOnClose
+}
+
+func (n *Node) SetQuitOnClose(quit bool) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cfg.QuitOnClose = quit
+	return n.cfg.Save()
+}
+
+// FirstTrayHint reports whether the "still running in the tray" notice
+// should be shown, and records that it has been.
+func (n *Node) FirstTrayHint() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.cfg.TrayHintShown {
+		return false
+	}
+	n.cfg.TrayHintShown = true
+	n.cfg.Save()
+	return true
+}
+
+// OnlinePaired counts paired devices that are online right now.
+func (n *Node) OnlinePaired() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	count := 0
+	for _, p := range n.peers {
+		if _, ok := n.cfg.TrustedByID(p.ID); ok && p.Online {
+			count++
+		}
+	}
+	return count
+}

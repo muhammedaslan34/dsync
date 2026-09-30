@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"fyne.io/systray"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"dsync/internal/clip"
@@ -27,6 +29,10 @@ type App struct {
 
 	mu        sync.Mutex
 	statusErr string
+
+	tray          trayState
+	notifications bool // desktop notifications work here
+	notifySeq     atomic.Int64
 }
 
 func NewApp(cfg *config.Config) (*App, error) {
@@ -42,6 +48,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.node.SetClipboard(clip.System())
+	if wruntime.InitializeNotifications(ctx) == nil {
+		a.notifications = true
+		wruntime.OnNotificationResponse(ctx, a.onNotificationClick)
+	}
+	a.startTray()
 	runCtx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
 	go func() {
@@ -54,13 +65,23 @@ func (a *App) startup(ctx context.Context) {
 	}()
 }
 
-func (a *App) shutdown(context.Context) {
+func (a *App) shutdown(ctx context.Context) {
 	a.cancel()
+	if a.notifications {
+		wruntime.CleanupNotifications(ctx)
+	}
+	a.tray.mu.Lock()
+	running := a.tray.running
+	a.tray.mu.Unlock()
+	if running {
+		systray.Quit()
+	}
 }
 
 func (a *App) emit(event string, data any) {
 	if a.ctx != nil {
 		wruntime.EventsEmit(a.ctx, event, data)
+		a.onEvent(event, data)
 	}
 }
 
@@ -199,3 +220,31 @@ func (a *App) imageHandler() http.Handler {
 func (a *App) ClipboardStatus() node.ClipboardStatus { return a.node.ClipboardStatus() }
 
 func (a *App) SetClipboardSync(on bool) error { return a.node.SetClipboardSync(on) }
+
+// BackgroundSettings are the settings for running without the window.
+type BackgroundSettings struct {
+	TrayAvailable      bool `json:"trayAvailable"`
+	KeepInTray         bool `json:"keepInTray"`
+	AutostartSupported bool `json:"autostartSupported"`
+	Autostart          bool `json:"autostart"`
+	AppMenuSupported   bool `json:"appMenuSupported"`
+	AppMenu            bool `json:"appMenu"`
+}
+
+func (a *App) Background() BackgroundSettings {
+	a.tray.mu.Lock()
+	running := a.tray.running
+	a.tray.mu.Unlock()
+	return BackgroundSettings{
+		TrayAvailable:      running,
+		KeepInTray:         !a.node.QuitOnClose(),
+		AutostartSupported: autostartSupported(),
+		Autostart:          autostartEnabled(),
+		AppMenuSupported:   appMenuSupported(),
+		AppMenu:            appMenuEnabled(),
+	}
+}
+
+func (a *App) SetKeepInTray(keep bool) error { return a.node.SetQuitOnClose(!keep) }
+func (a *App) SetAutostart(on bool) error    { return setAutostart(on) }
+func (a *App) SetAppMenu(on bool) error      { return setAppMenu(on) }

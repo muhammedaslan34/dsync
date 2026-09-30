@@ -5,6 +5,7 @@
 
   let {
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
+    bg, onBackground, setters,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -74,6 +75,45 @@
         <input type="checkbox" class="switch" role="switch" checked={clipStatus.enabled}
           disabled={!clipStatus.available} onchange={(e) => onClipboard(e.currentTarget.checked)} />
       </label>
+    </section>
+
+    <section class="setting">
+      <div class="setting-title">Background</div>
+      <label class="switch-row" class:disabled={!bg.trayAvailable}>
+        <span class="switch-text">
+          <span>Keep running in the tray when the window is closed</span>
+          <span class="muted small">
+            {#if bg.trayAvailable}
+              dsync keeps receiving and syncing the clipboard. Quit it from the tray icon.
+            {:else}
+              This desktop has no tray, so closing the window quits dsync. (On GNOME, the
+              AppIndicator extension adds one.)
+            {/if}
+          </span>
+        </span>
+        <input type="checkbox" class="switch" role="switch" checked={bg.trayAvailable && bg.keepInTray}
+          disabled={!bg.trayAvailable} onchange={(e) => onBackground(setters.SetKeepInTray, e.currentTarget.checked)} />
+      </label>
+      {#if bg.autostartSupported}
+        <label class="switch-row">
+          <span class="switch-text">
+            <span>Start dsync when I log in</span>
+            <span class="muted small">{bg.trayAvailable ? 'It starts in the tray, without opening the window.' : 'It opens its window when you log in.'}</span>
+          </span>
+          <input type="checkbox" class="switch" role="switch" checked={bg.autostart}
+            onchange={(e) => onBackground(setters.SetAutostart, e.currentTarget.checked)} />
+        </label>
+      {/if}
+      {#if bg.appMenuSupported}
+        <label class="switch-row">
+          <span class="switch-text">
+            <span>Show dsync in the app menu</span>
+            <span class="muted small">So you can open it like any other app.</span>
+          </span>
+          <input type="checkbox" class="switch" role="switch" checked={bg.appMenu}
+            onchange={(e) => onBackground(setters.SetAppMenu, e.currentTarget.checked)} />
+        </label>
+      {/if}
     </section>
 
     <section class="setting">

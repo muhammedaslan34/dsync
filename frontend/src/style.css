@@ -878,3 +878,4 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .switch:checked::after { transform: translateX(16px); }
 .switch:disabled { cursor: default; }
 .switch:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
+.setting .switch-row + .switch-row { margin-top: 12px; }

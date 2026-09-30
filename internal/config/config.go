@@ -24,6 +24,12 @@ type Config struct {
 	ManualPeers []string `json:"manual_peers,omitempty"`
 	// DownloadDir is where received files go; empty means ~/Downloads/dsync.
 	DownloadDir string `json:"download_dir,omitempty"`
+	// QuitOnClose quits the app when its window is closed, instead of
+	// keeping it running in the tray.
+	QuitOnClose bool `json:"quit_on_close,omitempty"`
+	// TrayHintShown records that the "still running in the tray" notice was
+	// shown, so it appears only once.
+	TrayHintShown bool `json:"tray_hint_shown,omitempty"`
 	// ClipboardSync shares the clipboard with paired devices.
 	ClipboardSync bool `json:"clipboard_sync,omitempty"`
 	// Trusted are the paired devices. Only they may send us data.

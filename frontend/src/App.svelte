@@ -4,7 +4,7 @@
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
     PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
-    ClipboardStatus, SetClipboardSync,
+    ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -37,6 +37,7 @@
   let pasted = $state(null) // items waiting for confirmation: { peerId, items }
   let attachOpen = $state(false)
   let clipStatus = $state({ enabled: false, available: false })
+  let bg = $state({})
   let theme = $state(loadTheme())
 
   let messagesEl = $state()
@@ -79,8 +80,8 @@
   })
 
   onMount(async () => {
-    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn, clipStatus] = await Promise.all([
-      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(), ClipboardStatus(),
+    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn, clipStatus, bg] = await Promise.all([
+      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(), ClipboardStatus(), Background(),
     ])
     localAddrs ??= []
     pairIn = (pairIn ?? []).map((r) => ({ ...r, kind: 'in' }))
@@ -99,6 +100,8 @@
     })
     EventsOn('progress', (p) => { progress[p.id] = p })
     EventsOn('error', (e) => { serviceError = e })
+    EventsOn('clipboard:status', (s) => { clipStatus = s })
+    EventsOn('open-peer', (id) => { dialog = null; select(id) })
     EventsOn('clipboard', (c) => {
       showToast(c.kind === 'image' ? `Image copied from ${c.peerName}` : `Clipboard from ${c.peerName}`, 'clip')
     })
@@ -235,6 +238,7 @@
 
   function openDialog(name) {
     dialog = name
+    if (name === 'settings') Background().then((b) => (bg = b))
     LocalAddrs().then((a) => (localAddrs = a ?? []))
   }
 
@@ -556,6 +560,12 @@
     {theme}
     {fingerprint}
     {clipStatus}
+    {bg}
+    onBackground={(setter, on) => run(async () => {
+      await setter(on)
+      bg = await Background()
+    })}
+    setters={{ SetKeepInTray, SetAutostart, SetAppMenu }}
     onClipboard={(on) => run(async () => {
       await SetClipboardSync(on)
       clipStatus = await ClipboardStatus()
