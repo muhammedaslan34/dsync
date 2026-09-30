@@ -12,6 +12,7 @@
   let addr = $state('')
   let busy = $state(false)
   let error = $state('')
+  let hint = $state('')
 
   onMount(search)
 
@@ -32,9 +33,22 @@
       onConnected(p.id)
     } catch (e) {
       error = String(e)
+      hint = hintFor(a, error)
     } finally {
       busy = false
     }
+  }
+
+  // hintFor explains the usual reasons a device can't be reached.
+  function hintFor(a, err) {
+    const onTailscale = localAddrs.some((x) => x.kind === 'Tailscale')
+    if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a.trim()) && !onTailscale) {
+      return "That's a Tailscale address, but this computer isn't connected to Tailscale. Connect it (on Linux: sudo tailscale up), or use the other computer's Wi-Fi address (like 192.168.x.x) when you're on the same network."
+    }
+    if (/deadline|timeout|refused|no route/i.test(err)) {
+      return "Nothing answered. If it's a Windows PC, its firewall may be blocking dsync: open dsync there → Settings → Windows Firewall. Also check that dsync is running there."
+    }
+    return ''
   }
 </script>
 
@@ -99,6 +113,7 @@
         </button>
       </div>
       {#if error}<p class="form-error"><Icon name="alert" size={14} /> {error}</p>{/if}
+      {#if hint}<p class="form-hint">{hint}</p>{/if}
     </form>
 
     {#if localAddrs.length}

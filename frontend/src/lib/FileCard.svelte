@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte'
   import { fmtSize, fileKind } from './format.js'
 
-  let { m, progress, onCancel, onOpen, onReveal, onRetry } = $props()
+  let { m, progress, onCancel, onOpen, onReveal, onRetry, showHiddenHint = false } = $props()
 
   let f = $derived(m.file)
   let kind = $derived(f.folder ? 'folder' : fileKind(f.name))
@@ -66,6 +66,9 @@
         {/if}
       </div>
       {#if f.error}<div class="file-error" title={f.error}>{f.error}</div>{/if}
+      {#if showHiddenHint && m.incoming && f.status === 'done' && f.name.startsWith('.')}
+        <div class="file-hint">Hidden file: press Ctrl+H in your file manager to see it.</div>
+      {/if}
     {/if}
   </div>
 </div>

@@ -6,7 +6,7 @@
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version,
-    FirewallStatus, FixFirewall, MakeNetworkPrivate,
+    FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -45,6 +45,8 @@
   let hostInfo = $state({})
   let version = $state('')
   let firewall = $state({ supported: false })
+  let updateInfo = $state(null) // from CheckUpdate / "update:available"
+  let updateProgress = $state(null) // { step, done, total } while updating
   // Other computers are probably blocked by Windows Firewall.
   let firewallProblem = $derived(firewall.supported && !firewall.error && (!firewall.ruleOk || firewall.publicNetworks?.length > 0))
   let control = $state(null) // { peer, state } while setting up remote control
@@ -119,6 +121,8 @@
       }
     })
     EventsOn('control:pin', (p) => { controlPins = [...controlPins, p] })
+    EventsOn('update:available', (u) => { updateInfo = u })
+    EventsOn('update:progress', (p) => { updateProgress = p })
     EventsOn('open-peer', (id) => { dialog = null; select(id) })
     EventsOn('clipboard', (c) => {
       showToast(c.kind === 'image' ? `Image copied from ${c.peerName}` : `Clipboard from ${c.peerName}`, 'clip')
@@ -362,6 +366,29 @@
     await refreshFirewall()
   }
 
+  async function checkUpdate() {
+    updateInfo = { checking: true }
+    updateInfo = await CheckUpdate()
+  }
+
+  async function installUpdate() {
+    updateProgress = { step: 'downloading', done: 0, total: 0 }
+    try {
+      await InstallUpdate()
+    } catch (e) {
+      updateProgress = null
+      showToast(String(e), 'error')
+    }
+  }
+
+  async function installProgram(name) {
+    await run(async () => {
+      await InstallProgram(name)
+      showToast(`${name === 'sunshine' ? 'Sunshine' : 'Moonlight'} is installed`)
+    })
+    hostInfo = await HostInfo()
+  }
+
   function preview(m) {
     if (!m) return null
     const text = m.file ? (m.file.folder ? `📁 ${m.file.name}` : m.file.name) : m.text.split('\n')[0]
@@ -374,6 +401,9 @@
     <div class="brand">
       <span class="logo"><Icon name="logo" size={18} stroke={2.4} /></span>
       <span class="brand-name">dsync</span>
+      {#if updateInfo?.available}
+        <button class="update-pill" title="dsync {updateInfo.latest} is available" onclick={() => openDialog('settings')}>Update</button>
+      {/if}
       <button class="icon-btn" title="Settings" onclick={() => openDialog('settings')}><Icon name="settings" /></button>
     </div>
 
@@ -416,7 +446,8 @@
               </span>
               <span class="device-row">
                 <span class="preview">
-                  {#if !d.paired && d.online}<span class="not-paired"><Icon name="lock" size={11} stroke={2.5} /> Not paired</span>
+                  {#if d.oneWay}<span class="one-way">Can't reach it</span>
+                  {:else if !d.paired && d.online}<span class="not-paired"><Icon name="lock" size={11} stroke={2.5} /> Not paired</span>
                   {:else if last}{preview(last)}{:else}{d.online ? `Online · ${osLabel[d.os] ?? d.os}` : 'Offline'}{/if}
                 </span>
                 {#if unread[d.id]}<span class="badge">{unread[d.id]}</span>{/if}
@@ -488,6 +519,7 @@
                 <div class="bubble file-bubble">
                   <FileCard
                     {m}
+                    showHiddenHint={self.os !== 'windows'}
                     progress={progress[m.id]}
                     onCancel={() => CancelTransfer(m.id)}
                     onOpen={() => run(() => OpenPath(m.file.path))}
@@ -531,7 +563,13 @@
           </button>
         </div>
       {:else}
-      {#if !selected.online}
+      {#if selected.oneWay}
+        <div class="offline-note one-way-note">
+          <Icon name="alert" size={14} />
+          <span>{selected.name} can send to this computer, but this computer can't reach it. Its firewall is probably blocking dsync.
+            {#if selected.os === 'windows'}On {selected.name}, update dsync or open its Settings → Windows Firewall and click the fix buttons.{:else}On {selected.name}, allow dsync through its firewall (<code>sudo ufw allow dsync</code>).{/if}</span>
+        </div>
+      {:else if !selected.online}
         <div class="offline-note"><Icon name="alert" size={14} /> {selected.name} is offline. Messages will fail until it's back.</div>
       {/if}
 
@@ -623,6 +661,11 @@
     {hostInfo}
     {version}
     {firewall}
+    {updateInfo}
+    {updateProgress}
+    onCheckUpdate={checkUpdate}
+    onInstallUpdate={installUpdate}
+    onInstallProgram={installProgram}
     onFixFirewall={() => fixFirewall(FixFirewall, 'dsync is now allowed through Windows Firewall')}
     onMakePrivate={() => fixFirewall(MakeNetworkPrivate, 'Your network is now set to Private')}
     onSunshineLogin={async (user, pw) => {

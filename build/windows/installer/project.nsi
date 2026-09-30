@@ -7,7 +7,8 @@ Unicode true
 ; tool. Without this, Wails would name the app dsync.exe too.
 !define PRODUCT_EXECUTABLE "dsync-gui.exe"
 !include "wails_tools.nsh"
-!include "MUI.nsh"
+!include "MUI2.nsh"
+!include "Sections.nsh"
 
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
@@ -29,10 +30,17 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Start dsync"
 !define MUI_FINISHPAGE_RUN_FUNCTION StartUnelevated
+; After installing Sunshine, its username and password are set in its web page.
+!define MUI_FINISHPAGE_SHOWREADME
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Set up Sunshine (choose its username and password)"
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION OpenSunshineSetup
+!define MUI_COMPONENTSPAGE_SMALLDESC
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -44,9 +52,23 @@ InstallDir "$PROGRAMFILES64\dsync"
 ShowInstDetails show
 ShowUninstDetails show
 
-Function .onInit
-    !insertmacro wails.checkArchitecture
+Function OpenSunshineSetup
+    ExecShell "open" "https://localhost:47990"
 FunctionEnd
+
+; Installs a program with winget, Windows' package manager, which fetches
+; the official, current version. Failing isn't fatal: it can also be
+; installed later from dsync's settings.
+!macro WingetInstall ID NAME
+    DetailPrint "Installing ${NAME} (this can take a minute)…"
+    nsExec::ExecToLog 'winget install --id ${ID} --exact --silent --accept-package-agreements --accept-source-agreements'
+    Pop $0
+    ${If} $0 == "error"
+        DetailPrint "winget isn't available, so ${NAME} wasn't installed. Install it later from dsync's settings."
+    ${ElseIf} $0 != 0
+        DetailPrint "${NAME} wasn't installed (winget code $0). It may already be installed; otherwise install it later from dsync's settings."
+    ${EndIf}
+!macroend
 
 Function StartUnelevated
     Exec '"$WINDIR\explorer.exe" "$INSTDIR\${PRODUCT_EXECUTABLE}"'
@@ -80,7 +102,8 @@ FunctionEnd
     ${EndIf}
 !macroend
 
-Section
+Section "dsync" SecDsync
+    SectionIn RO
     !insertmacro wails.setShellContext
     !insertmacro StopDsync
     !insertmacro wails.webview2runtime
@@ -104,6 +127,20 @@ Section
     !insertmacro wails.writeUninstaller
 SectionEnd
 
+Section "Sunshine: let your other computers control this PC" SecSunshine
+    !insertmacro WingetInstall "LizardByte.Sunshine" "Sunshine"
+SectionEnd
+
+Section "Moonlight: control your other computers from this PC" SecMoonlight
+    !insertmacro WingetInstall "MoonlightGameStreamingProject.Moonlight" "Moonlight"
+SectionEnd
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDsync} "The dsync app and the dsync command-line tool."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecSunshine} "Shares this PC's screen so your laptop can control it with dsync's remote control. Downloaded with winget."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecMoonlight} "Shows and controls your other computers' screens from this PC. Downloaded with winget."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
 Section "uninstall"
     !insertmacro wails.setShellContext
     !insertmacro StopDsync
@@ -120,3 +157,26 @@ Section "uninstall"
 
     !insertmacro wails.deleteUninstaller
 SectionEnd
+
+; These refer to the sections above, so they come after them.
+Function .onInit
+    !insertmacro wails.checkArchitecture
+    ; Don't offer what's already there.
+    ${If} ${FileExists} "$PROGRAMFILES64\Sunshine\sunshine.exe"
+        !insertmacro UnselectSection ${SecSunshine}
+        SectionSetText ${SecSunshine} "Sunshine (already installed)"
+    ${EndIf}
+    ${If} ${FileExists} "$PROGRAMFILES64\Moonlight Game Streaming\Moonlight.exe"
+        !insertmacro UnselectSection ${SecMoonlight}
+        SectionSetText ${SecMoonlight} "Moonlight (already installed)"
+    ${EndIf}
+FunctionEnd
+
+; Only offer the Sunshine setup if Sunshine was chosen.
+Function FinishShow
+    ${IfNot} ${SectionIsSelected} ${SecSunshine}
+        ShowWindow $mui.FinishPage.ShowReadme ${SW_HIDE}
+        SendMessage $mui.FinishPage.ShowReadme ${BM_SETCHECK} 0 0
+    ${EndIf}
+FunctionEnd
+

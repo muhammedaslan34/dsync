@@ -83,16 +83,13 @@ func (c *Config) Untrust(id string) {
 	c.Trusted = slices.DeleteFunc(c.Trusted, func(x TrustedPeer) bool { return x.ID == id })
 }
 
-// ReceiveDir returns the folder for received files.
+// ReceiveDir returns the folder for received files: the one chosen in the
+// settings, or a dsync folder in the user's Downloads folder.
 func (c *Config) ReceiveDir() string {
 	if c.DownloadDir != "" {
 		return c.DownloadDir
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, "Downloads", "dsync")
+	return filepath.Join(downloadsDir(), "dsync")
 }
 
 // Dir returns the config directory. DSYNC_CONFIG_DIR overrides it, which is

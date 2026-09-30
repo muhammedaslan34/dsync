@@ -7,6 +7,7 @@
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
     firewall, onFixFirewall, onMakePrivate,
+    updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -15,6 +16,20 @@
   let sunPass = $state('')
   let sunBusy = $state(false)
   let sunError = $state('')
+  let installing = $state('') // program being installed
+
+  async function install(name) {
+    installing = name
+    try {
+      await onInstallProgram(name)
+    } finally {
+      installing = ''
+    }
+  }
+
+  function fmtMB(n) {
+    return (n / 1048576).toFixed(1) + ' MB'
+  }
 
   async function saveSunshine(e) {
     e.preventDefault()
@@ -171,7 +186,14 @@
           <span class="rc-dot" class:ok={hostInfo.moonlight}></span>
           <span><b>Moonlight</b> {hostInfo.moonlight ? 'is installed: you can control other computers from here.' : "isn't installed: needed to control other computers."}</span>
         </div>
-        {#if hostInfo.moonlightHint}<code class="rc-hint">{hostInfo.moonlightHint}</code>{/if}
+        {#if !hostInfo.moonlight}
+          <div class="rc-install">
+            <button class="btn secondary sm" disabled={!!installing} onclick={() => install('moonlight')}>
+              {installing === 'moonlight' ? 'Installing…' : 'Install Moonlight'}
+            </button>
+            <span class="muted small">You may be asked for your password.</span>
+          </div>
+        {/if}
         <div class="rc-row">
           <span class="rc-dot" class:ok={hostInfo.sunshineRunning} class:warn={hostInfo.sunshineInstalled && !hostInfo.sunshineRunning}></span>
           <span><b>Sunshine</b>
@@ -180,7 +202,19 @@
             {:else}isn't installed: needed for other computers to control this one.{/if}
           </span>
         </div>
-        {#if hostInfo.sunshineHint}<code class="rc-hint">{hostInfo.sunshineHint}</code>{/if}
+        {#if !hostInfo.sunshineInstalled}
+          <div class="rc-install">
+            <button class="btn secondary sm" disabled={!!installing} onclick={() => install('sunshine')}>
+              {installing === 'sunshine' ? 'Installing…' : 'Install Sunshine'}
+            </button>
+            <span class="muted small">Then set its username and password once.</span>
+          </div>
+        {:else if !hostInfo.sunshineLogin}
+          <div class="rc-install">
+            <button class="btn secondary sm" onclick={() => onOpenURL(hostInfo.sunshineUrl)}>Open Sunshine setup</button>
+            <span class="muted small">Choose Sunshine's username and password there (first time only).</span>
+          </div>
+        {/if}
       </div>
       {#if hostInfo.sunshineInstalled || hostInfo.sunshineRunning}
         {#if hostInfo.sunshineLogin}
@@ -238,6 +272,32 @@
         {/each}
       </div>
     </section>
-    {#if version}<p class="version muted small">dsync {version}</p>{/if}
+    <section class="setting">
+      <div class="setting-title">Updates</div>
+      <div class="upd-row">
+        <span class="fw-text">
+          {#if updateProgress}
+            {#if updateProgress.step === 'downloading'}Downloading dsync {updateInfo?.latest}… {updateProgress.total ? `${fmtMB(updateProgress.done)} of ${fmtMB(updateProgress.total)}` : ''}
+            {:else if updateProgress.step === 'installing'}Installing… (you may be asked for your password)
+            {:else}Restarting dsync…{/if}
+          {:else if updateInfo?.checking}Checking…
+          {:else if updateInfo?.error}<span class="error">Couldn't check: {updateInfo.error}</span>
+          {:else if updateInfo?.available}<b>dsync {updateInfo.latest} is available.</b> You have {version}.
+          {:else if updateInfo}You have the latest version ({version}).
+          {:else}You have dsync {version}.{/if}
+        </span>
+        {#if updateInfo?.available && !updateProgress}
+          <button class="btn primary sm" onclick={onInstallUpdate}>{updateInfo.canInstall ? `Update to ${updateInfo.latest}` : 'Download'}</button>
+        {:else if !updateProgress}
+          <button class="btn secondary sm" disabled={updateInfo?.checking} onclick={onCheckUpdate}>Check for updates</button>
+        {/if}
+      </div>
+      {#if updateProgress?.step === 'downloading' && updateProgress.total}
+        <div class="bar"><div class="fill" style="width: {(updateProgress.done / updateProgress.total) * 100}%"></div></div>
+      {/if}
+      {#if updateInfo?.available && updateInfo.url}
+        <button class="text-btn small" onclick={() => onOpenURL(updateInfo.url)}>What's new in {updateInfo.latest}</button>
+      {/if}
+    </section>
   </div>
 </div>

@@ -24,6 +24,7 @@ import (
 type testNode struct {
 	*Node
 	addr string
+	srv  *http.Server
 }
 
 func newTestNode(t *testing.T, name string) testNode {
@@ -52,7 +53,7 @@ func newTestNodeWith(t *testing.T, name string, emit func(string, any)) testNode
 	srv := &http.Server{Handler: n.handler()}
 	go srv.Serve(tls.NewListener(ln, n.tlsConfig()))
 	t.Cleanup(func() { srv.Close() })
-	return testNode{n, ln.Addr().String()}
+	return testNode{n, ln.Addr().String(), srv}
 }
 
 // pair makes a and b trust each other, with a reaching b at addr.

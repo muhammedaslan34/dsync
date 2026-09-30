@@ -21,6 +21,14 @@ Download the file for your system from `dist/release` (see *Packaging* below):
   installs for your user only (no root), adds dsync to the app menu, and offers to open
   the firewall. `./uninstall.sh` removes it. Needs WebKitGTK 4.1.
 
+## Updates
+
+dsync checks GitHub for a new release shortly after it starts and twice a day; an
+**Update** badge appears when there is one. *Settings → Updates* installs it: the Windows
+setup runs (Windows asks for permission), the Arch package is installed with a password
+window, and a `install.sh` install is replaced in place. Downloads are checked against the
+release's `SHA256SUMS` before anything is installed.
+
 ## Packaging
 
 `./scripts/package.sh` runs the tests, builds everything, and writes the three installers
@@ -77,7 +85,9 @@ Open **dsync-gui** on both computers. They find each other automatically and sho
 in the sidebar; pick one and type, or drag files and folders onto the window (or use 📎 → Files… /
 Folder…) to send them. A folder shows as one item with overall progress and is recreated
 with its subfolders on the other side (symlinks and empty folders are skipped). Received
-files go to `~/Downloads/dsync` by default; change it at the bottom of the sidebar.
+files go to a `dsync` folder in your Downloads folder by default (wherever your system keeps
+it); change it in Settings. Files whose names start with a dot, like `.env`, are hidden by
+Linux file managers: press Ctrl+H to see them.
 Enter sends, Shift+Enter adds a new line, and every
 message has a Copy button. Open **Settings** (the sliders icon, or click your own device card) to rename this computer, see its addresses, change the received-files folder or switch between light and dark themes.
 
@@ -128,7 +138,9 @@ winget install MoonlightGameStreamingProject.Moonlight   # Windows
 winget install LizardByte.Sunshine                        # Windows
 ```
 
-Open Sunshine once after installing it to set its username and password. dsync then does
+You can also install them from dsync: *Settings → Remote control → Install*, and the
+Windows installer offers both as options. Open Sunshine once after installing it to set its
+username and password. dsync then does
 the rest: it starts Sunshine on the other computer if it isn't running, pairs Moonlight with
 it the first time (sending the PIN over dsync's encrypted connection), and opens the stream.
 If you save the Sunshine login in dsync's Settings on the controlled computer, that first

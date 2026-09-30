@@ -52,10 +52,19 @@ type Peer struct {
 	OS       string `json:"os"`
 	Addr     string `json:"addr"`
 	Manual   bool   `json:"manual"`
-	Online   bool   `json:"online"`
+	Online   bool   `json:"online"` // we can reach it
 	Paired   bool   `json:"paired"`
-	LastSeen int64  `json:"lastSeen"` // unix ms
+	LastSeen int64  `json:"lastSeen"` // unix ms, when we last reached it
+	// LastHeard is when it last contacted us (unix ms).
+	LastHeard int64 `json:"lastHeard"`
+	// OneWay means it reached us recently but we can't reach it: usually
+	// its firewall blocks incoming connections.
+	OneWay bool `json:"oneWay"`
 }
+
+// oneWayWindow is how recently a device must have contacted us for "we
+// can't reach it" to be reported as one-way rather than just offline.
+const oneWayWindow = 3 * time.Minute
 
 // Message is a text sent to or received from a peer.
 type Message struct {
@@ -196,6 +205,9 @@ func (n *Node) Scan(ctx context.Context) {
 			seen[d.ID] = Peer{ID: d.ID, Name: d.Name, OS: d.OS, Addr: addr, Manual: true}
 		}
 	}
+	for _, p := range n.probeMissing(ctx, seen) {
+		seen[p.ID] = p
+	}
 
 	now := time.Now().UnixMilli()
 	n.mu.Lock()
@@ -205,9 +217,49 @@ func (n *Node) Scan(ctx context.Context) {
 	}
 	for _, p := range n.peers {
 		p.Online = now-p.LastSeen < offlineAfter.Milliseconds()
+		p.OneWay = !p.Online && now-p.LastHeard < oneWayWindow.Milliseconds()
 	}
 	n.mu.Unlock()
 	n.emit(EventPeers, n.Peers())
+}
+
+// probeMissing tries paired devices that broadcast discovery didn't find
+// at their last known address, since some networks drop broadcasts.
+func (n *Node) probeMissing(ctx context.Context, seen map[string]Peer) []Peer {
+	n.mu.Lock()
+	var try []Peer
+	for id, p := range n.peers {
+		if _, ok := seen[id]; ok || p.Addr == "" {
+			continue
+		}
+		if _, paired := n.cfg.TrustedByID(id); paired {
+			try = append(try, *p)
+		}
+	}
+	n.mu.Unlock()
+
+	var (
+		mu    sync.Mutex
+		found []Peer
+		wg    sync.WaitGroup
+	)
+	for _, p := range try {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+			defer cancel()
+			d, _, err := n.cl.Info(pctx, p.Addr)
+			if err != nil || d.ID != p.ID {
+				return
+			}
+			mu.Lock()
+			found = append(found, Peer{ID: d.ID, Name: d.Name, OS: d.OS, Addr: p.Addr, Manual: p.Manual})
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return found
 }
 
 func (n *Node) Peers() []Peer {
@@ -327,14 +379,19 @@ func (n *Node) learnPeer(from config.TrustedPeer, name string, port int, remoteA
 		n.cfg.Trust(from)
 		n.cfg.Save()
 	}
+	now := time.Now().UnixMilli()
 	p, known := n.peers[from.ID]
 	switch {
 	case known:
-		p.Name = name
+		p.Name, p.LastHeard = name, now
+		if err == nil && port > 0 && p.Addr == "" {
+			p.Addr = net.JoinHostPort(host, strconv.Itoa(port))
+		}
 	case err == nil && port > 0:
+		// Whether we can reach it back is found out by the next scan.
 		n.peers[from.ID] = &Peer{
 			ID: from.ID, Name: name, Addr: net.JoinHostPort(host, strconv.Itoa(port)),
-			Online: true, LastSeen: time.Now().UnixMilli(),
+			LastHeard: now,
 		}
 	}
 	n.mu.Unlock()

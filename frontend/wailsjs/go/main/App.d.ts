@@ -17,6 +17,8 @@ export function CancelPair(arg1:string):Promise<void>;
 
 export function CancelTransfer(arg1:number):Promise<void>;
 
+export function CheckUpdate():Promise<main.UpdateInfo>;
+
 export function ChooseReceiveDir():Promise<string>;
 
 export function ClipboardStatus():Promise<node.ClipboardStatus>;
@@ -34,6 +36,10 @@ export function ForgetPeer(arg1:string):Promise<void>;
 export function History():Promise<Array<node.Message>>;
 
 export function HostInfo():Promise<node.HostInfo>;
+
+export function InstallProgram(arg1:string):Promise<void>;
+
+export function InstallUpdate():Promise<void>;
 
 export function LocalAddrs():Promise<Array<discovery.LocalAddr>>;
 

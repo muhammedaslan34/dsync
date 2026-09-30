@@ -61,6 +61,30 @@ export namespace main {
 	        this.error = source["error"];
 	    }
 	}
+	export class UpdateInfo {
+	    current: string;
+	    latest?: string;
+	    available: boolean;
+	    url?: string;
+	    notes?: string;
+	    canInstall: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current = source["current"];
+	        this.latest = source["latest"];
+	        this.available = source["available"];
+	        this.url = source["url"];
+	        this.notes = source["notes"];
+	        this.canInstall = source["canInstall"];
+	        this.error = source["error"];
+	    }
+	}
 
 }
 
@@ -211,6 +235,8 @@ export namespace node {
 	    online: boolean;
 	    paired: boolean;
 	    lastSeen: number;
+	    lastHeard: number;
+	    oneWay: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Peer(source);
@@ -226,6 +252,8 @@ export namespace node {
 	        this.online = source["online"];
 	        this.paired = source["paired"];
 	        this.lastSeen = source["lastSeen"];
+	        this.lastHeard = source["lastHeard"];
+	        this.oneWay = source["oneWay"];
 	    }
 	}
 

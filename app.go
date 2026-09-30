@@ -32,6 +32,7 @@ type App struct {
 	statusErr string
 
 	tray          trayState
+	upd           updateState
 	notifications bool // desktop notifications work here
 	notifySeq     atomic.Int64
 }
@@ -56,6 +57,7 @@ func (a *App) startup(ctx context.Context) {
 	a.startTray()
 	runCtx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
+	go a.autoCheckUpdates(runCtx)
 	go func() {
 		if err := a.node.Run(runCtx); err != nil {
 			a.mu.Lock()

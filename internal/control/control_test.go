@@ -165,3 +165,41 @@ func TestMoonlightCommands(t *testing.T) {
 		t.Errorf("calls:\n%s\nwant:\n%s", calls, want)
 	}
 }
+
+func TestInstallCommand(t *testing.T) {
+	defer func(os string, lp func(string) (string, error)) { runtimeOS, lookPath = os, lp }(runtimeOS, lookPath)
+	tools := map[string]bool{}
+	lookPath = func(name string) (string, error) {
+		if tools[name] {
+			return "/usr/bin/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	for _, c := range []struct {
+		os    string
+		tools []string
+		prog  string
+		want  string // "" = error
+	}{
+		{"windows", []string{"winget"}, "sunshine", "winget install --id LizardByte.Sunshine --exact --silent --accept-package-agreements --accept-source-agreements"},
+		{"windows", nil, "moonlight", ""},
+		{"linux", []string{"pacman", "pkexec", "flatpak"}, "moonlight", "pkexec pacman -S --needed --noconfirm moonlight-qt"},
+		{"linux", []string{"flatpak"}, "sunshine", "flatpak install --user --noninteractive flathub dev.lizardbyte.app.Sunshine"},
+		{"linux", nil, "moonlight", ""},
+		{"linux", []string{"pacman", "pkexec"}, "photoshop", ""},
+	} {
+		runtimeOS = c.os
+		clear(tools)
+		for _, tl := range c.tools {
+			tools[tl] = true
+		}
+		args, err := installCommand(c.prog)
+		got := strings.Join(args, " ")
+		if err != nil {
+			got = ""
+		}
+		if got != c.want {
+			t.Errorf("%s %v %s: got %q (%v), want %q", c.os, c.tools, c.prog, got, err, c.want)
+		}
+	}
+}
