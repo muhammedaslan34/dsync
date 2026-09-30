@@ -1,11 +1,17 @@
 <script>
   import { onMount, tick } from 'svelte'
   import {
-    Self, SetName, Peers, History, Status, Scan, AddPeer, ForgetPeer, SendText,
+    Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
     PickFiles, SendPaths, CancelTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
-    LocalAddrs, FindOnNetwork,
+    LocalAddrs,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
+  import Icon from './lib/Icon.svelte'
+  import Avatar from './lib/Avatar.svelte'
+  import FileCard from './lib/FileCard.svelte'
+  import ConnectDialog from './lib/ConnectDialog.svelte'
+  import SettingsDialog from './lib/SettingsDialog.svelte'
+  import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
 
   let self = $state({ id: '', name: '', os: '', port: 0 })
   let peers = $state([])
@@ -20,20 +26,11 @@
   let progress = $state({}) // message id -> { done, rate }
   let receiveDir = $state('')
   let localAddrs = $state([])
-  let searching = $state(false)
-  let searchResults = $state(null) // null until a search has run
-
-  let editingName = $state(false)
-  let nameDraft = $state('')
-  let showAdd = $state(false)
-  let addAddr = $state('')
-  let adding = $state(false)
-  let addError = $state('')
+  let dialog = $state(null) // 'connect' | 'settings' | null
+  let theme = $state(loadTheme())
 
   let messagesEl = $state()
   let composerEl = $state()
-
-  const osLabel = { windows: 'Windows', linux: 'Linux', darwin: 'macOS' }
 
   // Devices we have talked to stay in the list even after they disappear.
   let devices = $derived.by(() => {
@@ -43,10 +40,33 @@
         byId.set(m.peerId, { id: m.peerId, name: m.peerName, os: '', addr: '', online: false, manual: false })
       }
     }
-    return [...byId.values()].sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name))
+    return [...byId.values()].sort(
+      (a, b) => (b.online - a.online) || (lastByPeer[b.id]?.time ?? 0) - (lastByPeer[a.id]?.time ?? 0) || a.name.localeCompare(b.name),
+    )
+  })
+  let lastByPeer = $derived.by(() => {
+    const last = {}
+    for (const m of messages) last[m.peerId] = m
+    return last
   })
   let selected = $derived(devices.find((d) => d.id === selectedId) ?? null)
-  let thread = $derived(messages.filter((m) => m.peerId === selectedId))
+  let primaryAddr = $derived(localAddrs[0]?.ip ?? '')
+
+  // The thread with day separators, and a flag for the first message of
+  // each run from the same side (for spacing).
+  let items = $derived.by(() => {
+    const out = []
+    let prev = null
+    for (const m of messages) {
+      if (m.peerId !== selectedId) continue
+      const day = dayLabel(m.time)
+      if (!prev || dayLabel(prev.time) !== day) out.push({ key: `d${m.id}`, day })
+      const first = !prev || prev.incoming !== m.incoming || m.time - prev.time > 5 * 60000 || out.at(-1).day
+      out.push({ key: m.id, m, first })
+      prev = m
+    }
+    return out
+  })
 
   onMount(async () => {
     ;[self, peers, messages, serviceError, receiveDir, localAddrs] = await Promise.all([
@@ -71,15 +91,35 @@
 
     // Only elements with --wails-drop-target: drop accept files.
     OnFileDrop((_x, _y, paths) => {
-      if (selectedId && paths?.length) sendPaths(paths)
+      if (selectedId && paths?.length) run(() => SendPaths(selectedId, paths))
     }, true)
+
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') dialog = null })
 
     if (!selectedId && devices.length) select(devices[0].id)
   })
 
+  function loadTheme() {
+    let t = 'system'
+    try { t = localStorage.getItem('theme') || 'system' } catch {}
+    applyTheme(t)
+    return t
+  }
+
+  function applyTheme(t) {
+    if (t === 'system') document.documentElement.removeAttribute('data-theme')
+    else document.documentElement.dataset.theme = t
+  }
+
+  function setTheme(t) {
+    theme = t
+    applyTheme(t)
+    try { localStorage.setItem('theme', t) } catch {}
+  }
+
   async function scrollToBottom() {
     await tick()
-    if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight
+    messagesEl?.scrollTo({ top: messagesEl.scrollHeight })
   }
 
   function select(id) {
@@ -90,9 +130,18 @@
   }
 
   function showToast(text, kind = 'info') {
-    toast = { text, kind }
+    toast = { text, kind, id: Date.now() }
     clearTimeout(showToast.t)
-    showToast.t = setTimeout(() => (toast = null), 3500)
+    showToast.t = setTimeout(() => (toast = null), kind === 'error' ? 5000 : 2200)
+  }
+
+  // run calls fn and shows any error as a toast.
+  async function run(fn) {
+    try {
+      return await fn()
+    } catch (e) {
+      showToast(String(e), 'error')
+    }
   }
 
   async function send() {
@@ -102,6 +151,8 @@
     try {
       await SendText(selected.id, text)
       draft = ''
+      await tick()
+      autosize()
     } catch (e) {
       showToast(String(e), 'error')
     } finally {
@@ -117,124 +168,28 @@
     }
   }
 
-  async function attach() {
-    try {
-      await PickFiles(selected.id)
-    } catch (e) {
-      showToast(String(e), 'error')
-    }
+  function autosize() {
+    if (!composerEl) return
+    composerEl.style.height = 'auto'
+    composerEl.style.height = `${Math.min(composerEl.scrollHeight, 200)}px`
   }
-
-  async function sendPaths(paths) {
-    try {
-      await SendPaths(selectedId, paths)
-    } catch (e) {
-      showToast(String(e), 'error')
-    }
-  }
-
-  async function changeReceiveDir() {
-    try {
-      receiveDir = await ChooseReceiveDir()
-    } catch (e) {
-      showToast(String(e), 'error')
-    }
-  }
-
-  async function run(fn, path) {
-    try {
-      await fn(path)
-    } catch (e) {
-      showToast(String(e), 'error')
-    }
-  }
-
-  function fmtSize(n) {
-    if (n < 1024) return `${n} B`
-    const units = ['KB', 'MB', 'GB', 'TB']
-    let i = -1
-    do { n /= 1024; i++ } while (n >= 1024 && i < units.length - 1)
-    return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`
-  }
-
-  function pct(done, size) {
-    return size ? Math.min(100, (done / size) * 100) : 0
-  }
-
-  function extOf(name) {
-    const i = name.lastIndexOf('.')
-    return i > 0 && name.length - i <= 5 ? name.slice(i + 1).toUpperCase() : 'FILE'
-  }
-
-  const statusText = { done: 'done', failed: 'failed', canceled: 'canceled' }
 
   function refresh() {
     scanning = true
     Scan()
   }
 
-  async function saveName() {
-    if (!editingName) return
-    editingName = false
-    if (nameDraft.trim() === self.name) return
-    try {
-      await SetName(nameDraft)
+  async function rename(name) {
+    await run(async () => {
+      await SetName(name)
       self = await Self()
-    } catch (e) {
-      showToast(String(e), 'error')
-    }
-  }
-
-  function openAdd() {
-    showAdd = true
-    addError = ''
-    addAddr = ''
-    LocalAddrs().then((a) => (localAddrs = a ?? []))
-    search()
-  }
-
-  async function search() {
-    searching = true
-    try {
-      searchResults = (await FindOnNetwork()) ?? []
-    } finally {
-      searching = false
-    }
-  }
-
-  async function connect(addr) {
-    adding = true
-    addError = ''
-    try {
-      const p = await AddPeer(addr)
-      showAdd = false
-      select(p.id)
-    } catch (err) {
-      addError = String(err)
-    } finally {
-      adding = false
-    }
-  }
-
-  async function addDevice(e) {
-    e.preventDefault()
-    adding = true
-    addError = ''
-    try {
-      const p = await AddPeer(addAddr)
-      showAdd = false
-      addAddr = ''
-      select(p.id)
-    } catch (err) {
-      addError = String(err)
-    } finally {
-      adding = false
-    }
+      showToast('Device renamed')
+    })
   }
 
   async function forget() {
     if (!selected) return
-    await ForgetPeer(selected.id)
+    await run(() => ForgetPeer(selected.id))
     selectedId = null
   }
 
@@ -243,228 +198,220 @@
     showToast('Copied to clipboard')
   }
 
-  function fmtTime(ms) {
-    const d = new Date(ms)
-    const today = new Date().toDateString() === d.toDateString()
-    return today
-      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  function openDialog(name) {
+    dialog = name
+    LocalAddrs().then((a) => (localAddrs = a ?? []))
+  }
+
+  function preview(m) {
+    if (!m) return null
+    const text = m.file ? m.file.name : m.text.split('\n')[0]
+    return (m.incoming ? '' : 'You: ') + text
   }
 </script>
 
 <div class="app">
   <aside class="sidebar">
-    <section class="me">
-      <div class="label">This device</div>
-      {#if editingName}
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="name-input"
-          bind:value={nameDraft}
-          autofocus
-          onblur={saveName}
-          onkeydown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') editingName = false }}
-        />
-      {:else}
-        <button class="me-name" title="Rename" onclick={() => { nameDraft = self.name; editingName = true }}>
-          {self.name}
-          <span class="edit">✎</span>
-        </button>
-      {/if}
-      <div class="muted small">{osLabel[self.os] ?? self.os} · port {self.port}</div>
-      {#each localAddrs as a (a.ip)}
-        <button class="addr" title="Copy address" onclick={() => copy(a.ip)}>
-          <span>{a.ip}</span><span class="muted small">{a.kind}</span>
-        </button>
-      {/each}
-    </section>
+    <div class="brand">
+      <span class="logo"><Icon name="logo" size={18} stroke={2.4} /></span>
+      <span class="brand-name">dsync</span>
+      <button class="icon-btn" title="Settings" onclick={() => openDialog('settings')}><Icon name="settings" /></button>
+    </div>
+
+    <button class="me" title="Settings" onclick={() => openDialog('settings')}>
+      <Avatar name={self.name} id={self.id} size={36} online={!serviceError} />
+      <span class="device-text">
+        <span class="device-name">{self.name}</span>
+        <span class="muted small">{osLabel[self.os] ?? self.os}{primaryAddr ? ` · ${primaryAddr}` : ''}</span>
+      </span>
+      <span class="chip">This PC</span>
+    </button>
 
     <div class="list-head">
-      <span class="label">Devices</span>
-      <div class="head-actions">
-        <button class="icon" title="Scan again" onclick={refresh} class:spin={scanning}>↻</button>
-        <button class="icon" title="Find or add a device" onclick={openAdd}>+</button>
-      </div>
+      <span class="label">Devices <span class="count">{devices.length}</span></span>
+      <button class="icon-btn sm" title="Scan again" onclick={refresh}>
+        <span class:spin={scanning}><Icon name="refresh" size={15} /></span>
+      </button>
     </div>
 
     <ul class="devices">
       {#each devices as d (d.id)}
+        {@const last = lastByPeer[d.id]}
         <li>
           <button class="device" class:active={d.id === selectedId} onclick={() => select(d.id)}>
-            <span class="dot" class:online={d.online}></span>
+            <Avatar name={d.name} id={d.id} size={38} online={d.online} />
             <span class="device-text">
-              <span class="device-name">{d.name}</span>
-              <span class="muted small">{d.online ? (osLabel[d.os] ?? d.os) : 'offline'}</span>
+              <span class="device-row">
+                <span class="device-name">{d.name}</span>
+                {#if last}<span class="time">{fmtShort(last.time)}</span>{/if}
+              </span>
+              <span class="device-row">
+                <span class="preview">
+                  {#if last}{preview(last)}{:else}{d.online ? `Online · ${osLabel[d.os] ?? d.os}` : 'Offline'}{/if}
+                </span>
+                {#if unread[d.id]}<span class="badge">{unread[d.id]}</span>{/if}
+              </span>
             </span>
-            {#if unread[d.id]}<span class="badge">{unread[d.id]}</span>{/if}
           </button>
         </li>
       {:else}
         <li class="empty-list">
+          <span class="pulse"><Icon name="wifi" size={20} /></span>
           <p>Looking for devices…</p>
-          <p class="muted small">
-            Start dsync on your other computer. If it doesn't show up, open UDP 47100 and TCP 47101
-            in the firewall, or add it by address with <b>+</b>.
-          </p>
+          <p class="muted small">Open dsync on your other computer and it will show up here.</p>
         </li>
       {/each}
     </ul>
 
-    <section class="receive">
-      <div class="label">Received files</div>
-      <button class="path" title={receiveDir} onclick={() => run(OpenPath, receiveDir)}>{'\u200e' + receiveDir + '\u200e'}</button>
-      <button class="link small" onclick={changeReceiveDir}>Change folder</button>
-    </section>
+    <div class="sidebar-foot">
+      <button class="btn primary block" onclick={() => openDialog('connect')}>
+        <Icon name="plus" size={16} /> Connect a device
+      </button>
+    </div>
   </aside>
 
   <main class="main" class:drop-target={!!selected}>
     {#if serviceError}
-      <div class="banner">Background service stopped: {serviceError}</div>
+      <div class="banner"><Icon name="alert" size={16} /> Background service stopped: {serviceError}</div>
     {/if}
 
     {#if selected}
       <header class="thread-head">
-        <div>
+        <Avatar name={selected.name} id={selected.id} size={40} online={selected.online} />
+        <div class="device-text">
           <div class="thread-name">{selected.name}</div>
           <div class="muted small">
-            <span class="dot inline" class:online={selected.online}></span>
-            {selected.online ? 'online' : 'offline'}{selected.addr ? ` · ${selected.addr}` : ''}
+            {#if selected.online}
+              <span class="online-text">Online</span> · {osLabel[selected.os] ?? selected.os}{selected.addr ? ` · ${selected.addr}` : ''}
+            {:else}
+              Offline
+            {/if}
           </div>
         </div>
-        {#if selected.manual}
-          <button class="ghost" onclick={forget}>Forget</button>
-        {/if}
+        <div class="head-actions">
+          <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
+          <button class="icon-btn" title="Open received files folder" onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
+          {#if selected.manual}
+            <button class="icon-btn danger" title="Forget this device" onclick={forget}><Icon name="trash" /></button>
+          {/if}
+        </div>
       </header>
 
       <div class="messages" bind:this={messagesEl}>
-        {#each thread as m (m.id)}
-          <div class="msg" class:out={!m.incoming}>
-            <div class="bubble" class:file-bubble={m.file}>
+        {#each items as it (it.key)}
+          {#if it.day}
+            <div class="day"><span>{it.day}</span></div>
+          {:else}
+            {@const m = it.m}
+            <div class="msg" class:out={!m.incoming} class:first={it.first}>
               {#if m.file}
-                {@const f = m.file}
-                {@const p = progress[m.id]}
-                <div class="file">
-                  <div class="file-icon">{extOf(f.name)}</div>
-                  <div class="file-body">
-                    <div class="file-name" title={f.name}>{f.name}</div>
-                    {#if f.status === 'active'}
-                      <div class="bar"><div class="fill" style="width: {pct(p?.done ?? 0, f.size)}%"></div></div>
-                      <div class="muted small">
-                        {#if p}
-                          {fmtSize(p.done)} of {fmtSize(f.size)} · {fmtSize(p.rate)}/s
-                        {:else}
-                          {fmtSize(f.size)} · {m.incoming ? 'starting…' : 'waiting…'}
-                        {/if}
-                      </div>
-                    {:else}
-                      <div class="muted small" class:error={f.status === 'failed'} title={f.error}>
-                        {fmtSize(f.size)} · {statusText[f.status]}{f.error ? `: ${f.error}` : ''}
-                      </div>
-                    {/if}
-                  </div>
+                <div class="bubble file-bubble">
+                  <FileCard
+                    {m}
+                    progress={progress[m.id]}
+                    onCancel={() => CancelTransfer(m.id)}
+                    onOpen={() => run(() => OpenPath(m.file.path))}
+                    onReveal={() => run(() => RevealPath(m.file.path))}
+                  />
+                  <span class="stamp">{fmtTime(m.time)}</span>
                 </div>
               {:else}
-                <pre>{m.text}</pre>
+                <div class="bubble">
+                  <pre>{m.text}</pre>
+                  <span class="stamp">{fmtTime(m.time)}</span>
+                </div>
+                <button class="copy-btn" title="Copy" onclick={() => copy(m.text)}><Icon name="copy" size={14} /></button>
               {/if}
-              <div class="meta">
-                <span>{fmtTime(m.time)}</span>
-                {#if m.file?.status === 'active'}
-                  <button class="action" onclick={() => CancelTransfer(m.id)}>Cancel</button>
-                {:else if m.file?.status === 'done' && m.file.path}
-                  <button class="action" onclick={() => run(OpenPath, m.file.path)}>Open</button>
-                  <button class="action" onclick={() => run(RevealPath, m.file.path)}>Show in folder</button>
-                {:else if !m.file}
-                  <button class="copy" onclick={() => copy(m.text)}>Copy</button>
-                {/if}
-              </div>
             </div>
-          </div>
+          {/if}
         {:else}
-          <div class="empty">No messages with {selected.name} yet.<br/>Type below, or drag files here.</div>
+          <div class="thread-empty">
+            <Avatar name={selected.name} id={selected.id} size={64} />
+            <h3>Start sending to {selected.name}</h3>
+            <p class="muted">Type a message or command below, or drag files anywhere in this window.</p>
+          </div>
         {/each}
       </div>
 
+      {#if !selected.online}
+        <div class="offline-note"><Icon name="alert" size={14} /> {selected.name} is offline. Messages will fail until it's back.</div>
+      {/if}
+
       <form class="composer" onsubmit={(e) => { e.preventDefault(); send() }}>
-        <button type="button" class="icon attach" title="Send files (or drag them here)" onclick={attach}>📎</button>
-        <textarea
-          bind:this={composerEl}
-          bind:value={draft}
-          onkeydown={onComposerKey}
-          rows="3"
-          placeholder={selected.online ? `Message ${selected.name} — Enter to send, Shift+Enter for a new line` : `${selected.name} is offline`}
-        ></textarea>
-        <button class="primary" type="submit" disabled={sending || !draft.trim()}>
-          {sending ? 'Sending…' : 'Send'}
-        </button>
+        <div class="composer-box">
+          <button type="button" class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}>
+            <Icon name="paperclip" />
+          </button>
+          <textarea
+            bind:this={composerEl}
+            bind:value={draft}
+            oninput={autosize}
+            onkeydown={onComposerKey}
+            rows="1"
+            placeholder="Message {selected.name}"
+          ></textarea>
+          <button class="send-btn" type="submit" title="Send (Enter)" disabled={sending || !draft.trim()}>
+            <Icon name="send" size={17} />
+          </button>
+        </div>
+        <div class="composer-hint">Enter to send · Shift+Enter for a new line · Drop files to send them</div>
       </form>
     {:else}
       <div class="welcome">
-        <h1>dsync</h1>
-        <p class="muted">Pick a device on the left to send it text.</p>
+        <span class="logo big"><Icon name="logo" size={34} stroke={2.2} /></span>
+        <h1>Welcome to dsync</h1>
+        <p class="muted">Send text, commands and files between your computers.</p>
+        <ol class="steps">
+          <li><span class="step-n">1</span><div><b>Open dsync on your other computer</b><span class="muted">Both need to be on the same network, or on Tailscale.</span></div></li>
+          <li><span class="step-n">2</span><div><b>Allow it through the firewall</b><span class="muted">UDP 47100 and TCP 47101, on private networks.</span></div></li>
+          <li><span class="step-n">3</span><div><b>Pick it on the left</b><span class="muted">It appears automatically, or use Connect a device.</span></div></li>
+        </ol>
+        <button class="btn primary" onclick={() => openDialog('connect')}><Icon name="plus" size={16} /> Connect a device</button>
+        {#if primaryAddr}
+          <p class="muted small">This computer's address: <button class="text-btn mono" onclick={() => copy(primaryAddr)}>{primaryAddr}</button></p>
+        {/if}
+      </div>
+    {/if}
+
+    {#if selected}
+      <div class="drop-hint">
+        <div class="drop-card">
+          <Icon name="upload" size={36} />
+          <b>Drop to send to {selected.name}</b>
+        </div>
       </div>
     {/if}
   </main>
 </div>
 
-{#if selected}
-  <div class="drop-hint">Drop to send to {selected.name}</div>
-{/if}
-
-{#if showAdd}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) showAdd = false }}>
-    <form class="dialog" onsubmit={addDevice}>
-      <div class="dialog-title">
-        <h2>Connect a device</h2>
-        <button type="button" class="link small" onclick={search} disabled={searching}>
-          {searching ? 'Searching…' : 'Search again'}
-        </button>
-      </div>
-      <p class="muted small">Make sure dsync is open on the other computer.</p>
-
-      <div class="results">
-        {#if searching && !searchResults?.length}
-          <div class="muted small result-note"><span class="spinner"></span> Searching your network…</div>
-        {:else if searchResults?.length}
-          {#each searchResults as r (r.id)}
-            {@const known = peers.some((p) => p.id === r.id)}
-            <div class="result">
-              <span class="dot online"></span>
-              <span class="device-text">
-                <span class="device-name">{r.name}</span>
-                <span class="muted small">{osLabel[r.os] ?? r.os} · {r.addr}</span>
-              </span>
-              <button type="button" class="primary small-btn" disabled={adding} onclick={() => connect(r.addr)}>
-                {known ? 'Open' : 'Connect'}
-              </button>
-            </div>
-          {/each}
-        {:else if searchResults}
-          <div class="muted small result-note">
-            Nothing found on your network. Check that dsync is running there and TCP port 47101 is
-            allowed in its firewall, or enter its address below.
-          </div>
-        {/if}
-      </div>
-
-      <label class="label" for="addr-input">Or enter its address</label>
-      <input id="addr-input" bind:value={addAddr} placeholder="192.168.1.20 or a Tailscale IP like 100.64.0.2" />
-      {#if localAddrs.length}
-        <p class="muted small hint">
-          This computer's address: {#each localAddrs as a, i (a.ip)}{i ? ', ' : ''}<button type="button" class="link" title="Copy" onclick={() => copy(a.ip)}>{a.ip}</button> ({a.kind}){/each}
-        </p>
-      {/if}
-      {#if addError}<p class="error small">{addError}</p>{/if}
-      <div class="dialog-actions">
-        <button type="button" class="ghost" onclick={() => (showAdd = false)}>Close</button>
-        <button type="submit" class="primary" disabled={adding || !addAddr.trim()}>
-          {adding ? 'Connecting…' : 'Add'}
-        </button>
-      </div>
-    </form>
-  </div>
+{#if dialog === 'connect'}
+  <ConnectDialog
+    {peers}
+    {localAddrs}
+    onClose={() => (dialog = null)}
+    onConnected={(id) => { dialog = null; select(id) }}
+    onCopy={copy}
+  />
+{:else if dialog === 'settings'}
+  <SettingsDialog
+    {self}
+    {receiveDir}
+    {localAddrs}
+    {theme}
+    onClose={() => (dialog = null)}
+    onRename={rename}
+    onChangeDir={() => run(async () => (receiveDir = await ChooseReceiveDir()))}
+    onOpenDir={() => run(() => OpenPath(receiveDir))}
+    onCopy={copy}
+    onTheme={setTheme}
+  />
 {/if}
 
 {#if toast}
-  <div class="toast" class:error-toast={toast.kind === 'error'}>{toast.text}</div>
+  {#key toast.id}
+    <div class="toast" class:error={toast.kind === 'error'} role="status">
+      <Icon name={toast.kind === 'error' ? 'alert' : 'check'} size={16} />
+      <span>{toast.text}</span>
+    </div>
+  {/key}
 {/if}
