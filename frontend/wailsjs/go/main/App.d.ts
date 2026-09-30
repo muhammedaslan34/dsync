@@ -23,6 +23,8 @@ export function CheckUpdate():Promise<main.UpdateInfo>;
 
 export function ChooseReceiveDir():Promise<string>;
 
+export function ClearHistory(arg1:string):Promise<void>;
+
 export function ClipboardStatus():Promise<node.ClipboardStatus>;
 
 export function ControlInfo(arg1:string):Promise<node.ControlInfo>;

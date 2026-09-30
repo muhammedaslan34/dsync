@@ -111,6 +111,10 @@ the chat history, and anything a password manager marks as secret (KeePassXC, KD
 standard Windows flag) is never sent. On GNOME/Wayland it works through XWayland, which
 is there by default.
 
+To clear history, use the eraser button in a conversation's header, or *Settings → History →
+Clear all*. It only removes the messages on this computer: received files stay in your
+Downloads folder and the other computer keeps its copy.
+
 Interrupted transfers resume where they stopped: if the connection drops, the sender keeps
 retrying for a few minutes, and a failed file has a **Retry** button (or run the same
 `dsync send` again); for a folder, files that already arrived are skipped. The receiver keeps partial files as hidden `.dsync-*.part` files in

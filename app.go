@@ -314,3 +314,7 @@ func (a *App) AllowSunshineFirewall() error {
 	defer cancel()
 	return control.AllowSunshineFirewall(ctx)
 }
+
+// ClearHistory removes the messages with a device, or all messages if
+// peerID is empty. Received files stay on disk.
+func (a *App) ClearHistory(peerID string) error { return a.node.ClearHistory(peerID) }

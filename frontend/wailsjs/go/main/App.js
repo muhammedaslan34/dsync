@@ -38,6 +38,10 @@ export function ChooseReceiveDir() {
   return window['go']['main']['App']['ChooseReceiveDir']();
 }
 
+export function ClearHistory(arg1) {
+  return window['go']['main']['App']['ClearHistory'](arg1);
+}
+
 export function ClipboardStatus() {
   return window['go']['main']['App']['ClipboardStatus']();
 }

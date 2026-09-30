@@ -7,7 +7,7 @@
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version, ControlInfo,
     FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
-    AllowSunshineFirewall,
+    AllowSunshineFirewall, ClearHistory,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -35,7 +35,7 @@
   let progress = $state({}) // message id -> { done, rate }
   let receiveDir = $state('')
   let localAddrs = $state([])
-  let dialog = $state(null) // 'connect' | 'settings' | 'unpair' | null
+  let dialog = $state(null) // 'connect' | 'settings' | 'unpair' | 'clear' | 'clear-all' | null
   let fingerprint = $state('')
   let pairOut = $state(null) // pairing we started: { kind: 'out', peerId, name, code, error }
   let pairIn = $state([]) // incoming requests waiting for an answer
@@ -123,6 +123,12 @@
     })
     EventsOn('control:pin', (p) => { controlPins = [...controlPins, p] })
     EventsOn('update:available', (u) => { updateInfo = u })
+    EventsOn('history:cleared', (peerId) => {
+      // Running transfers stay, as in the backend.
+      messages = messages.filter((m) => (peerId && m.peerId !== peerId) || m.file?.status === 'active')
+      if (peerId) unread[peerId] = 0
+      else unread = {}
+    })
     EventsOn('update:progress', (p) => { updateProgress = p })
     EventsOn('open-peer', (id) => { dialog = null; select(id) })
     EventsOn('clipboard', (c) => {
@@ -289,6 +295,14 @@
     const r = pairIn[0]
     AnswerPair(r.id, accept)
     pairIn = pairIn.slice(1)
+  }
+
+  async function clearHistory(peerId) {
+    dialog = null
+    await run(async () => {
+      await ClearHistory(peerId)
+      showToast(peerId ? 'Conversation cleared' : 'All conversations cleared')
+    })
   }
 
   async function unpair() {
@@ -518,6 +532,9 @@
           {#if selected.paired && selected.online}
             <button class="icon-btn" title="Control this computer" onclick={() => startControl(selected)}><Icon name="monitor" /></button>
           {/if}
+          {#if messages.some((m) => m.peerId === selected.id)}
+            <button class="icon-btn" title="Clear this conversation" onclick={() => (dialog = 'clear')}><Icon name="eraser" /></button>
+          {/if}
           <button class="icon-btn" title="Open received files folder" onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
           {#if selected.paired}
             <button class="icon-btn danger" title="Unpair" onclick={() => (dialog = 'unpair')}><Icon name="unlink" /></button>
@@ -695,6 +712,7 @@
       await OpenSunshineSetup()
       hostInfo = await HostInfo()
     })}
+    onClearAll={() => (dialog = 'clear-all')}
     onFixFirewall={() => fixFirewall(FixFirewall, 'dsync is now allowed through Windows Firewall')}
     onMakePrivate={() => fixFirewall(MakeNetworkPrivate, 'Your network is now set to Private')}
     onSunshineLogin={async (user, pw) => {
@@ -720,6 +738,23 @@
     onCopy={copy}
     onTheme={setTheme}
   />
+{/if}
+
+{#if (dialog === 'clear' && selected) || dialog === 'clear-all'}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) dialog = null }}>
+    <div class="dialog confirm" role="dialog" aria-label="Clear history">
+      <h2>{dialog === 'clear' ? `Clear the conversation with ${selected.name}?` : 'Clear all conversations?'}</h2>
+      <p class="muted">
+        {dialog === 'clear' ? 'Messages and the file list with this device are removed from this computer.' : 'All messages and file lists are removed from this computer.'}
+        Received files stay in your Downloads folder, and the other computer keeps its copy.
+      </p>
+      <div class="dialog-actions">
+        <button class="btn secondary" onclick={() => (dialog = null)}>Cancel</button>
+        <button class="btn danger" onclick={() => clearHistory(dialog === 'clear' ? selected.id : '')}>Clear</button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 {#if dialog === 'unpair' && selected}

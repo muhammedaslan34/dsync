@@ -6,7 +6,7 @@
   let {
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
-    firewall, onFixFirewall, onMakePrivate,
+    firewall, onFixFirewall, onMakePrivate, onClearAll,
     updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram, onSunshineSetup, onAllowSunshine,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
@@ -253,6 +253,14 @@
       <div class="security-row">
         <Icon name="key" size={16} />
         <span>This device's key: <span class="mono">{fingerprint}</span></span>
+      </div>
+    </section>
+
+    <section class="setting">
+      <div class="setting-title">History</div>
+      <div class="upd-row">
+        <span class="fw-text">Remove all messages and file lists from this computer. Received files are kept.</span>
+        <button class="btn secondary sm" onclick={onClearAll}>Clear all</button>
       </div>
     </section>
 

@@ -103,3 +103,55 @@ func TestNotEnoughDiskSpaceIsRefusedUpFront(t *testing.T) {
 		t.Errorf("receiver recorded %d transfers for a refused file", len(msgs))
 	}
 }
+
+func TestClearHistory(t *testing.T) {
+	a, b := newTestNode(t, "A"), newTestNode(t, "B")
+	c := newTestNode(t, "C")
+	pair(a, b, b.addr)
+	pair(a, c, c.addr)
+	a.SendText(context.Background(), b.cfg.ID, "to B")
+	a.SendText(context.Background(), c.cfg.ID, "to C")
+	a.SendData(context.Background(), b.cfg.ID, "pasted.png", []byte("\x89PNG pasted"))
+	waitFile(t, a.Node, lastID(a.Node))
+	var pasted string
+	for _, m := range a.History() {
+		if m.File != nil {
+			pasted = m.File.Path
+		}
+	}
+	// A transfer still running must survive.
+	running := a.addMessage(Message{PeerID: b.cfg.ID, File: &FileInfo{Name: "big.iso", Status: StatusActive}})
+
+	if err := a.ClearHistory(b.cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, m := range a.History() {
+		if m.File != nil {
+			left = append(left, m.File.Name)
+		} else {
+			left = append(left, m.Text)
+		}
+	}
+	if len(left) != 2 || left[0] != "to C" || left[1] != "big.iso" {
+		t.Fatalf("after clearing B: %v", left)
+	}
+	if _, err := os.Stat(pasted); err == nil {
+		t.Error("pasted data kept only for resending should be deleted")
+	}
+
+	// It stays cleared after a restart.
+	again, err := New(a.cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := again.History(); len(h) != 2 {
+		t.Fatalf("reloaded history has %d messages", len(h))
+	}
+
+	// Clearing everything keeps only the running transfer.
+	a.ClearHistory("")
+	if h := a.History(); len(h) != 1 || h[0].ID != running.ID {
+		t.Fatalf("after clearing all: %+v", h)
+	}
+}

@@ -536,3 +536,38 @@ func (n *Node) OnlinePaired() int {
 	}
 	return count
 }
+
+// EventHistoryCleared reports cleared messages (data: peer id, "" = all).
+const EventHistoryCleared = "history:cleared"
+
+// ClearHistory removes the messages with peerID, or with everyone if
+// peerID is "". Received files stay on disk; transfers still running are
+// kept so they can finish or be canceled. Pasted data that was kept only
+// for sending again is deleted.
+func (n *Node) ClearHistory(peerID string) error {
+	outbox := n.outboxDir() + string(filepath.Separator)
+	n.mu.Lock()
+	kept := n.history[:0:0]
+	var orphans []string
+	for _, m := range n.history {
+		if peerID != "" && m.PeerID != peerID {
+			kept = append(kept, m)
+			continue
+		}
+		if m.File != nil && m.File.Status == StatusActive {
+			kept = append(kept, m)
+			continue
+		}
+		if m.File != nil && !m.Incoming && strings.HasPrefix(m.File.Path, outbox) {
+			orphans = append(orphans, m.File.Path)
+		}
+	}
+	n.history = kept
+	n.saveHistoryLocked()
+	n.mu.Unlock()
+	for _, p := range orphans {
+		os.Remove(p)
+	}
+	n.emit(EventHistoryCleared, peerID)
+	return nil
+}
