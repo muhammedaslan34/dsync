@@ -130,7 +130,8 @@ jobs:
           path: out/*
 
   ios:
-    runs-on: macos-15
+    # Expo's iOS code needs Swift 6.3 (Xcode 26.4 or later).
+    runs-on: macos-26
     defaults:
       run:
         working-directory: mobile
@@ -147,7 +148,8 @@ jobs:
 
       - name: Use the newest Xcode
         run: |
-          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
           xcodebuild -version
 
       - name: Install
