@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"dsync/internal/proto"
 )
@@ -23,6 +24,48 @@ type Config struct {
 	ManualPeers []string `json:"manual_peers,omitempty"`
 	// DownloadDir is where received files go; empty means ~/Downloads/dsync.
 	DownloadDir string `json:"download_dir,omitempty"`
+	// Trusted are the paired devices. Only they may send us data.
+	Trusted []TrustedPeer `json:"trusted,omitempty"`
+}
+
+// TrustedPeer is a paired device, identified by its key fingerprint.
+type TrustedPeer struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// TrustedByFingerprint finds the paired device with this key.
+func (c *Config) TrustedByFingerprint(fp string) (TrustedPeer, bool) {
+	for _, t := range c.Trusted {
+		if t.Fingerprint == fp {
+			return t, true
+		}
+	}
+	return TrustedPeer{}, false
+}
+
+// TrustedByID finds the paired device with this device id.
+func (c *Config) TrustedByID(id string) (TrustedPeer, bool) {
+	for _, t := range c.Trusted {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return TrustedPeer{}, false
+}
+
+// Trust adds or updates a paired device. A device id or key can only belong
+// to one entry, so old entries for either are replaced.
+func (c *Config) Trust(t TrustedPeer) {
+	c.Untrust(t.ID)
+	c.Trusted = slices.DeleteFunc(c.Trusted, func(x TrustedPeer) bool { return x.Fingerprint == t.Fingerprint })
+	c.Trusted = append(c.Trusted, t)
+}
+
+// Untrust removes the paired device with this id.
+func (c *Config) Untrust(id string) {
+	c.Trusted = slices.DeleteFunc(c.Trusted, func(x TrustedPeer) bool { return x.ID == id })
 }
 
 // ReceiveDir returns the folder for received files.

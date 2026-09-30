@@ -3,7 +3,7 @@
   import {
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
     PickFiles, SendPaths, CancelTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
-    LocalAddrs,
+    LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -11,6 +11,7 @@
   import FileCard from './lib/FileCard.svelte'
   import ConnectDialog from './lib/ConnectDialog.svelte'
   import SettingsDialog from './lib/SettingsDialog.svelte'
+  import PairDialog from './lib/PairDialog.svelte'
   import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
 
   let self = $state({ id: '', name: '', os: '', port: 0 })
@@ -26,7 +27,10 @@
   let progress = $state({}) // message id -> { done, rate }
   let receiveDir = $state('')
   let localAddrs = $state([])
-  let dialog = $state(null) // 'connect' | 'settings' | null
+  let dialog = $state(null) // 'connect' | 'settings' | 'unpair' | null
+  let fingerprint = $state('')
+  let pairOut = $state(null) // pairing we started: { kind: 'out', peerId, name, code, error }
+  let pairIn = $state([]) // incoming requests waiting for an answer
   let theme = $state(loadTheme())
 
   let messagesEl = $state()
@@ -69,10 +73,11 @@
   })
 
   onMount(async () => {
-    ;[self, peers, messages, serviceError, receiveDir, localAddrs] = await Promise.all([
-      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(),
+    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn] = await Promise.all([
+      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(),
     ])
     localAddrs ??= []
+    pairIn = (pairIn ?? []).map((r) => ({ ...r, kind: 'in' }))
     peers ??= []
     messages ??= []
 
@@ -88,6 +93,20 @@
     })
     EventsOn('progress', (p) => { progress[p.id] = p })
     EventsOn('error', (e) => { serviceError = e })
+    EventsOn('pair:request', (r) => { pairIn = [...pairIn, { ...r, kind: 'in' }] })
+    EventsOn('pair:closed', (id) => { pairIn = pairIn.filter((r) => r.id !== id) })
+    EventsOn('pair:result', (r) => {
+      if (pairOut?.peerId !== r.peerId) return
+      if (r.ok) {
+        showToast(`Paired with ${pairOut.name}`)
+        pairOut = null
+        tick().then(() => composerEl?.focus())
+      } else if (r.error === 'canceled') {
+        pairOut = null
+      } else {
+        pairOut = { ...pairOut, error: r.error }
+      }
+    })
 
     // Only elements with --wails-drop-target: drop accept files.
     OnFileDrop((_x, _y, paths) => {
@@ -203,6 +222,34 @@
     LocalAddrs().then((a) => (localAddrs = a ?? []))
   }
 
+  async function startPair(d) {
+    pairOut = { kind: 'out', peerId: d.id, name: d.name, code: '', error: '' }
+    try {
+      pairOut.code = await StartPair(d.id)
+    } catch (e) {
+      pairOut.error = String(e)
+    }
+  }
+
+  function closePairOut() {
+    if (pairOut && !pairOut.error) CancelPair(pairOut.peerId)
+    pairOut = null
+  }
+
+  function answerPair(accept) {
+    const r = pairIn[0]
+    AnswerPair(r.id, accept)
+    pairIn = pairIn.slice(1)
+  }
+
+  async function unpair() {
+    dialog = null
+    await run(async () => {
+      await Unpair(selected.id)
+      showToast(`Unpaired ${selected.name}`)
+    })
+  }
+
   function preview(m) {
     if (!m) return null
     const text = m.file ? m.file.name : m.text.split('\n')[0]
@@ -247,7 +294,8 @@
               </span>
               <span class="device-row">
                 <span class="preview">
-                  {#if last}{preview(last)}{:else}{d.online ? `Online · ${osLabel[d.os] ?? d.os}` : 'Offline'}{/if}
+                  {#if !d.paired && d.online}<span class="not-paired"><Icon name="lock" size={11} stroke={2.5} /> Not paired</span>
+                  {:else if last}{preview(last)}{:else}{d.online ? `Online · ${osLabel[d.os] ?? d.os}` : 'Offline'}{/if}
                 </span>
                 {#if unread[d.id]}<span class="badge">{unread[d.id]}</span>{/if}
               </span>
@@ -270,7 +318,7 @@
     </div>
   </aside>
 
-  <main class="main" class:drop-target={!!selected}>
+  <main class="main" class:drop-target={!!selected?.paired}>
     {#if serviceError}
       <div class="banner"><Icon name="alert" size={16} /> Background service stopped: {serviceError}</div>
     {/if}
@@ -283,14 +331,20 @@
           <div class="muted small">
             {#if selected.online}
               <span class="online-text">Online</span> · {osLabel[selected.os] ?? selected.os}{selected.addr ? ` · ${selected.addr}` : ''}
+              {#if selected.paired}<span class="secure" title="Paired · end-to-end encrypted (TLS 1.3)"> · <Icon name="lock" size={11} stroke={2.5} /> Encrypted</span>{/if}
             {:else}
               Offline
             {/if}
           </div>
         </div>
         <div class="head-actions">
-          <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
+          {#if selected.paired}
+            <button class="icon-btn" title="Send files" onclick={() => run(() => PickFiles(selected.id))}><Icon name="paperclip" /></button>
+          {/if}
           <button class="icon-btn" title="Open received files folder" onclick={() => run(() => OpenPath(receiveDir))}><Icon name="folder" /></button>
+          {#if selected.paired}
+            <button class="icon-btn danger" title="Unpair" onclick={() => (dialog = 'unpair')}><Icon name="unlink" /></button>
+          {/if}
           {#if selected.manual}
             <button class="icon-btn danger" title="Forget this device" onclick={forget}><Icon name="trash" /></button>
           {/if}
@@ -327,12 +381,29 @@
         {:else}
           <div class="thread-empty">
             <Avatar name={selected.name} id={selected.id} size={64} />
-            <h3>Start sending to {selected.name}</h3>
-            <p class="muted">Type a message or command below, or drag files anywhere in this window.</p>
+            {#if selected.paired}
+              <h3>Start sending to {selected.name}</h3>
+              <p class="muted">Type a message or command below, or drag files anywhere in this window.</p>
+            {:else}
+              <h3>{selected.name} isn't paired yet</h3>
+              <p class="muted">Pair once to send messages and files. Everything between paired devices is encrypted.</p>
+            {/if}
           </div>
         {/each}
       </div>
 
+      {#if !selected.paired}
+        <div class="pair-bar">
+          <span class="pair-bar-icon"><Icon name="lock" size={18} /></span>
+          <div class="device-text">
+            <b>Pair with {selected.name}</b>
+            <span class="muted small">You'll confirm a 6-digit code on both computers.</span>
+          </div>
+          <button class="btn primary" disabled={!selected.online} onclick={() => startPair(selected)}>
+            {selected.online ? 'Pair' : 'Offline'}
+          </button>
+        </div>
+      {:else}
       {#if !selected.online}
         <div class="offline-note"><Icon name="alert" size={14} /> {selected.name} is offline. Messages will fail until it's back.</div>
       {/if}
@@ -356,6 +427,7 @@
         </div>
         <div class="composer-hint">Enter to send · Shift+Enter for a new line · Drop files to send them</div>
       </form>
+      {/if}
     {:else}
       <div class="welcome">
         <span class="logo big"><Icon name="logo" size={34} stroke={2.2} /></span>
@@ -389,7 +461,12 @@
     {peers}
     {localAddrs}
     onClose={() => (dialog = null)}
-    onConnected={(id) => { dialog = null; select(id) }}
+    onConnected={(id) => {
+      dialog = null
+      select(id)
+      const d = devices.find((x) => x.id === id)
+      if (d && !d.paired) startPair(d)
+    }}
     onCopy={copy}
   />
 {:else if dialog === 'settings'}
@@ -398,6 +475,8 @@
     {receiveDir}
     {localAddrs}
     {theme}
+    {fingerprint}
+    pairedCount={peers.filter((p) => p.paired).length}
     onClose={() => (dialog = null)}
     onRename={rename}
     onChangeDir={() => run(async () => (receiveDir = await ChooseReceiveDir()))}
@@ -405,6 +484,26 @@
     onCopy={copy}
     onTheme={setTheme}
   />
+{/if}
+
+{#if dialog === 'unpair' && selected}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) dialog = null }}>
+    <div class="dialog confirm" role="dialog" aria-label="Unpair">
+      <h2>Unpair {selected.name}?</h2>
+      <p class="muted">Neither computer will accept messages or files from the other until you pair again.</p>
+      <div class="dialog-actions">
+        <button class="btn secondary" onclick={() => (dialog = null)}>Cancel</button>
+        <button class="btn danger" onclick={unpair}>Unpair</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if pairIn.length}
+  <PairDialog pair={pairIn[0]} onAnswer={answerPair} />
+{:else if pairOut}
+  <PairDialog pair={pairOut} onCancel={closePairOut} onRetry={() => startPair({ id: pairOut.peerId, name: pairOut.name })} />
 {/if}
 
 {#if toast}

@@ -2,7 +2,7 @@
 package proto
 
 const (
-	Version         = 1
+	Version         = 2
 	DiscoveryPort   = 47100 // UDP
 	DefaultHTTPPort = 47101 // TCP
 	MaxTextBytes    = 1 << 20
@@ -46,3 +46,18 @@ const (
 	HeaderFileSize = "X-Dsync-File-Size"
 	TrailerSHA256  = "X-Dsync-Sha256" // hex
 )
+
+// PairRequest asks a device to trust the sender. The sender's key comes from
+// its TLS client certificate.
+type PairRequest struct {
+	FromID   string `json:"from_id"`
+	FromName string `json:"from_name"`
+	FromPort int    `json:"from_port"`
+	OS       string `json:"os"`
+}
+
+// PairResponse is returned when the other side accepts.
+type PairResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}

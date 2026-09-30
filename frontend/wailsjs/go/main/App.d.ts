@@ -6,11 +6,17 @@ import {proto} from '../models';
 
 export function AddPeer(arg1:string):Promise<node.Peer>;
 
+export function AnswerPair(arg1:string,arg2:boolean):Promise<void>;
+
+export function CancelPair(arg1:string):Promise<void>;
+
 export function CancelTransfer(arg1:number):Promise<void>;
 
 export function ChooseReceiveDir():Promise<string>;
 
 export function FindOnNetwork():Promise<Array<node.Peer>>;
+
+export function Fingerprint():Promise<string>;
 
 export function ForgetPeer(arg1:string):Promise<void>;
 
@@ -21,6 +27,8 @@ export function LocalAddrs():Promise<Array<discovery.LocalAddr>>;
 export function OpenPath(arg1:string):Promise<void>;
 
 export function Peers():Promise<Array<node.Peer>>;
+
+export function PendingPairs():Promise<Array<node.PairRequest>>;
 
 export function PickFiles(arg1:string):Promise<void>;
 
@@ -38,4 +46,8 @@ export function SendText(arg1:string,arg2:string):Promise<void>;
 
 export function SetName(arg1:string):Promise<void>;
 
+export function StartPair(arg1:string):Promise<string>;
+
 export function Status():Promise<string>;
+
+export function Unpair(arg1:string):Promise<void>;

@@ -66,18 +66,32 @@ dsync text --to MyPC "hello"      # pick a device by name
 cat notes.txt | dsync text        # send text from stdin
 dsync send --to MyPC a.zip b.iso  # send files with a progress bar
 dsync text --addr 100.64.0.2 "hi" # skip discovery
+dsync pair --to MyPC              # pair (confirm the code on both screens)
 ```
 
 Settings and message history live in `~/.config/dsync/` (Linux) or `%AppData%\dsync\`
 (Windows).
 
-> Traffic is plain HTTP for now. Pairing and encryption come in step 3, so only use
-> it on your home network until then.
+## Pairing and security
+
+Devices must be paired before they can send each other anything. Pick a device and click
+**Pair**: both computers show the same 6-digit code, and you accept on the other one if
+the codes match. (Headless machines running `dsync serve` answer by typing `y`; from the
+command line, use `dsync pair --to NAME`.)
+
+- Every connection is TLS 1.3. Each device creates its own key on first run
+  (`identity.pem` in the settings folder) and pairing pins the other device's key, so
+  nobody else on the network can read, send or impersonate.
+- The code is derived from both keys, so a machine intercepting the pairing would make
+  the two codes differ. Only accept when they match.
+- If a paired device's key changes (reinstall, or something pretending to be it), dsync
+  refuses to talk to it until you unpair and pair again.
+- Unpairing (the broken-link icon in the header) removes trust on both sides.
 
 ## Roadmap
 
 1. ✅ Discovery + text, desktop app
 2. ✅ File transfer (streaming, progress, checksum, cancel)
-3. Pairing + TLS
+3. ✅ Pairing + TLS 1.3
 4. Resume, clipboard sync, folders
 5. `dsync control` (launch Moonlight), tray GUI, Tailscale

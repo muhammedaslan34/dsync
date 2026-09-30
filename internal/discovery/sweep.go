@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"dsync/internal/client"
+	"dsync/internal/proto"
 )
 
 // LocalAddr is one of this machine's IPv4 addresses.
@@ -98,7 +98,7 @@ func rank(kind string) int {
 // directly over HTTP. It is slower than broadcast discovery but works when a
 // firewall or router drops broadcasts. Networks larger than /24 are limited
 // to the /24 around this machine's address.
-func Sweep(ctx context.Context, selfID string, port int) []Peer {
+func Sweep(ctx context.Context, selfID string, port int, info func(ctx context.Context, addr string) (proto.Device, error)) []Peer {
 	var targets []netip.Addr
 	own := map[netip.Addr]bool{}
 	for _, la := range LocalAddrs() {
@@ -134,7 +134,7 @@ func Sweep(ctx context.Context, selfID string, port int) []Peer {
 			addr := net.JoinHostPort(ip.String(), strconv.Itoa(port))
 			reqCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
 			defer cancel()
-			d, err := client.Info(reqCtx, addr)
+			d, err := info(reqCtx, addr)
 			if err != nil || d.ID == "" || d.ID == selfID {
 				return
 			}

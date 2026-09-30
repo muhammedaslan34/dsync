@@ -4,19 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"dsync/internal/proto"
 )
-
-// fileClient has no overall timeout, since big files can take a long time.
-var fileClient = &http.Client{}
 
 // FileHeader describes a file being sent.
 type FileHeader struct {
@@ -27,11 +24,15 @@ type FileHeader struct {
 	Size     int64
 }
 
-// SendFile streams r to the device at addr. progress, if set, is called with
-// the number of bytes sent so far.
-func SendFile(ctx context.Context, addr string, h FileHeader, r io.Reader, progress func(int64)) error {
+// SendFile streams r to the paired device with key fp. progress, if set, is
+// called with the number of bytes sent so far. There is no overall timeout,
+// since big files can take a long time; cancel ctx to stop.
+func (c *Client) SendFile(ctx context.Context, addr, fp string, h FileHeader, r io.Reader, progress func(int64)) error {
+	if fp == "" {
+		return errors.New("device is not paired")
+	}
 	hr := &hashingReader{r: r, h: sha256.New(), progress: progress}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/api/v1/file", hr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint(addr, "/api/v1/file"), hr)
 	if err != nil {
 		return err
 	}
@@ -45,14 +46,13 @@ func SendFile(ctx context.Context, addr string, h FileHeader, r io.Reader, progr
 	req.Header.Set(proto.HeaderFileName, url.QueryEscape(h.Name))
 	req.Header.Set(proto.HeaderFileSize, strconv.FormatInt(h.Size, 10))
 
-	resp, err := fileClient.Do(req)
+	resp, err := c.forKey(fp).Do(req)
 	if err != nil {
-		return err
+		return unwrap(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(msg)))
+	if err := checkStatus(resp, http.StatusNoContent); err != nil {
+		return err
 	}
 	if hr.n != h.Size {
 		return fmt.Errorf("file changed while sending (%d of %d bytes)", hr.n, h.Size)

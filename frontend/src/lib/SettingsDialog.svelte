@@ -4,7 +4,7 @@
   import { osLabel } from './format.js'
 
   let {
-    self, receiveDir, localAddrs, theme,
+    self, receiveDir, localAddrs, theme, fingerprint, pairedCount,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -23,8 +23,8 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
   <div class="dialog" role="dialog" aria-label="Settings">
     <header class="dialog-head">
       <h2>Settings</h2>
@@ -54,6 +54,18 @@
         {:else}
           <p class="muted small">No network connection.</p>
         {/each}
+      </div>
+    </section>
+
+    <section class="setting">
+      <div class="setting-title">Security</div>
+      <div class="security-row">
+        <Icon name="lock" size={16} />
+        <span>Connections are encrypted with TLS 1.3. Only paired devices ({pairedCount}) can send you data.</span>
+      </div>
+      <div class="security-row">
+        <Icon name="key" size={16} />
+        <span>This device's key: <span class="mono">{fingerprint}</span></span>
       </div>
     </section>
 

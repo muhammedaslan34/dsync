@@ -21,7 +21,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	app := NewApp(cfg)
+	app, err := NewApp(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	err = wails.Run(&options.App{
 		Title:            "dsync",

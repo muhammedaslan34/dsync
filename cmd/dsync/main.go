@@ -16,13 +16,15 @@ const usage = `dsync - send text and files between your computers
 
 Usage:
   dsync serve                         run the service that receives messages
+                                      (answer pairing requests by typing y)
   dsync devices [--wait 1.5s]         list devices on the local network
   dsync text [--to NAME] MESSAGE      send text to another device
   echo hi | dsync text [--to NAME]    send text read from stdin
   dsync send [--to NAME] FILE...      send files
+  dsync pair [--to NAME]              pair with a device (confirm the code on both sides)
   dsync version
 
-Flags for text and send (put them before the message or files):
+Flags for text, send and pair (put them before the message or files):
   --to NAME          device name or id prefix (optional if only one device is found)
   --addr HOST[:PORT] send directly, skipping discovery (e.g. over Tailscale)
 `
@@ -47,6 +49,8 @@ func main() {
 		err = cmdText(cfg, args)
 	case "send":
 		err = cmdSend(cfg, args)
+	case "pair":
+		err = cmdPair(cfg, args)
 	case "version":
 		fmt.Println("dsync", version)
 	case "help", "-h", "--help":

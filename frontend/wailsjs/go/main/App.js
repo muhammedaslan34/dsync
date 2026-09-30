@@ -6,6 +6,14 @@ export function AddPeer(arg1) {
   return window['go']['main']['App']['AddPeer'](arg1);
 }
 
+export function AnswerPair(arg1, arg2) {
+  return window['go']['main']['App']['AnswerPair'](arg1, arg2);
+}
+
+export function CancelPair(arg1) {
+  return window['go']['main']['App']['CancelPair'](arg1);
+}
+
 export function CancelTransfer(arg1) {
   return window['go']['main']['App']['CancelTransfer'](arg1);
 }
@@ -16,6 +24,10 @@ export function ChooseReceiveDir() {
 
 export function FindOnNetwork() {
   return window['go']['main']['App']['FindOnNetwork']();
+}
+
+export function Fingerprint() {
+  return window['go']['main']['App']['Fingerprint']();
 }
 
 export function ForgetPeer(arg1) {
@@ -36,6 +48,10 @@ export function OpenPath(arg1) {
 
 export function Peers() {
   return window['go']['main']['App']['Peers']();
+}
+
+export function PendingPairs() {
+  return window['go']['main']['App']['PendingPairs']();
 }
 
 export function PickFiles(arg1) {
@@ -70,6 +86,14 @@ export function SetName(arg1) {
   return window['go']['main']['App']['SetName'](arg1);
 }
 
+export function StartPair(arg1) {
+  return window['go']['main']['App']['StartPair'](arg1);
+}
+
 export function Status() {
   return window['go']['main']['App']['Status']();
+}
+
+export function Unpair(arg1) {
+  return window['go']['main']['App']['Unpair'](arg1);
 }

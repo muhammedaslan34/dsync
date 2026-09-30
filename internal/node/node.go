@@ -6,6 +6,7 @@ package node
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,8 +25,8 @@ import (
 	"dsync/internal/client"
 	"dsync/internal/config"
 	"dsync/internal/discovery"
+	"dsync/internal/identity"
 	"dsync/internal/proto"
-	"dsync/internal/server"
 )
 
 // Events passed to the emit callback.
@@ -52,6 +53,7 @@ type Peer struct {
 	Addr     string `json:"addr"`
 	Manual   bool   `json:"manual"`
 	Online   bool   `json:"online"`
+	Paired   bool   `json:"paired"`
 	LastSeen int64  `json:"lastSeen"` // unix ms
 }
 
@@ -68,21 +70,40 @@ type Message struct {
 
 type Node struct {
 	cfg  *config.Config
+	id   *identity.Identity
+	cl   *client.Client
 	emit func(event string, data any)
 
 	mu        sync.Mutex
 	peers     map[string]*Peer
 	history   []Message
 	transfers map[int64]context.CancelFunc
+	pending   map[string]*pendingPair       // incoming pair requests by request id
+	pairing   map[string]context.CancelFunc // outgoing pair requests by peer id
 }
 
-func New(cfg *config.Config, emit func(event string, data any)) *Node {
+// New loads (or creates) this device's identity and history.
+func New(cfg *config.Config, emit func(event string, data any)) (*Node, error) {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
-	n := &Node{cfg: cfg, emit: emit, peers: map[string]*Peer{}, transfers: map[int64]context.CancelFunc{}}
+	dir, err := config.Dir()
+	if err != nil {
+		return nil, err
+	}
+	id, err := identity.Load(dir)
+	if err != nil {
+		return nil, err
+	}
+	n := &Node{
+		cfg: cfg, id: id, cl: client.New(id), emit: emit,
+		peers:     map[string]*Peer{},
+		transfers: map[int64]context.CancelFunc{},
+		pending:   map[string]*pendingPair{},
+		pairing:   map[string]context.CancelFunc{},
+	}
 	n.loadHistory()
-	return n
+	return n, nil
 }
 
 func (n *Node) Self() proto.Device {
@@ -108,8 +129,8 @@ func (n *Node) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen tcp :%d: %w (is dsync already running?)", n.cfg.Port, err)
 	}
-	srv := &server.Server{Self: n.Self, OnText: n.receiveText, Files: n.receiveFile}
-	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	ln = tls.NewListener(ln, n.tlsConfig())
+	httpSrv := &http.Server{Handler: n.handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -160,7 +181,7 @@ func (n *Node) Scan(ctx context.Context) {
 	n.mu.Unlock()
 	for _, addr := range manual {
 		infoCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		d, err := client.Info(infoCtx, addr)
+		d, _, err := n.cl.Info(infoCtx, addr)
 		cancel()
 		if err == nil && d.ID != self.ID {
 			seen[d.ID] = Peer{ID: d.ID, Name: d.Name, OS: d.OS, Addr: addr, Manual: true}
@@ -185,7 +206,9 @@ func (n *Node) Peers() []Peer {
 	defer n.mu.Unlock()
 	out := make([]Peer, 0, len(n.peers))
 	for _, p := range n.peers {
-		out = append(out, *p)
+		c := *p
+		_, c.Paired = n.cfg.TrustedByID(p.ID)
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out
@@ -201,7 +224,7 @@ func (n *Node) AddPeer(ctx context.Context, addr string) (Peer, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		addr = net.JoinHostPort(addr, strconv.Itoa(proto.DefaultHTTPPort))
 	}
-	d, err := client.Info(ctx, addr)
+	d, _, err := n.cl.Info(ctx, addr)
 	if err != nil {
 		return Peer{}, fmt.Errorf("could not reach %s: %w", addr, err)
 	}
@@ -219,7 +242,15 @@ func (n *Node) AddPeer(ctx context.Context, addr string) (Peer, error) {
 	}
 	n.mu.Unlock()
 	n.emit(EventPeers, n.Peers())
+	_, p.Paired = n.trusted(p.ID)
 	return p, saveErr
+}
+
+// trusted returns the pinned key for a paired device.
+func (n *Node) trusted(peerID string) (config.TrustedPeer, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.cfg.TrustedByID(peerID)
 }
 
 // ForgetPeer removes a device from the list. Devices found by discovery
@@ -257,42 +288,49 @@ func (n *Node) SendText(ctx context.Context, peerID, text string) error {
 	if !ok {
 		return fmt.Errorf("unknown device %s", peerID)
 	}
+	t, paired := n.trusted(peerID)
+	if !paired {
+		return fmt.Errorf("pair with %s first", name)
+	}
 
 	self := n.Self()
 	msg := proto.TextMessage{FromID: self.ID, FromName: self.Name, FromPort: self.Port, Text: text}
-	if err := client.SendText(ctx, addr, msg); err != nil {
+	if err := n.cl.SendText(ctx, addr, t.Fingerprint, msg); err != nil {
 		return fmt.Errorf("send to %s: %w", name, err)
 	}
 	n.addMessage(Message{PeerID: peerID, PeerName: name, Text: text})
 	return nil
 }
 
-func (n *Node) receiveText(m proto.TextMessage, remoteAddr string) {
-	n.learnPeer(m.FromID, m.FromName, m.FromPort, remoteAddr)
-	n.addMessage(Message{PeerID: m.FromID, PeerName: m.FromName, Incoming: true, Text: m.Text})
-}
-
-// learnPeer records a device that contacted us, even if discovery can't see
-// it (e.g. over a VPN).
-func (n *Node) learnPeer(id, name string, port int, remoteAddr string) {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil || id == "" || port <= 0 {
-		return
+// learnPeer records a paired device that contacted us, even if discovery
+// can't see it (e.g. over a VPN), and keeps its name current. It returns the
+// name to show.
+func (n *Node) learnPeer(from config.TrustedPeer, name string, port int, remoteAddr string) string {
+	if name == "" {
+		name = from.Name
 	}
+	host, _, err := net.SplitHostPort(remoteAddr)
 	n.mu.Lock()
-	p, known := n.peers[id]
-	if !known {
-		n.peers[id] = &Peer{
-			ID: id, Name: name, Addr: net.JoinHostPort(host, strconv.Itoa(port)),
+	if name != from.Name {
+		from.Name = name
+		n.cfg.Trust(from)
+		n.cfg.Save()
+	}
+	p, known := n.peers[from.ID]
+	switch {
+	case known:
+		p.Name = name
+	case err == nil && port > 0:
+		n.peers[from.ID] = &Peer{
+			ID: from.ID, Name: name, Addr: net.JoinHostPort(host, strconv.Itoa(port)),
 			Online: true, LastSeen: time.Now().UnixMilli(),
 		}
-	} else {
-		p.Name = name
 	}
 	n.mu.Unlock()
 	if !known {
 		n.emit(EventPeers, n.Peers())
 	}
+	return name
 }
 
 func (n *Node) History() []Message {
@@ -390,7 +428,11 @@ func (n *Node) LocalAddrs() []discovery.LocalAddr {
 // only reports what it finds; the caller decides which ones to add.
 func (n *Node) FindOnNetwork(ctx context.Context) []Peer {
 	self := n.Self()
-	found := discovery.Sweep(ctx, self.ID, self.Port)
+	info := func(ctx context.Context, addr string) (proto.Device, error) {
+		d, _, err := n.cl.Info(ctx, addr)
+		return d, err
+	}
+	found := discovery.Sweep(ctx, self.ID, self.Port, info)
 	out := make([]Peer, len(found))
 	for i, p := range found {
 		out[i] = Peer{ID: p.ID, Name: p.Name, OS: p.OS, Addr: p.Addr(), Online: true}

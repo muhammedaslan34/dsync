@@ -38,8 +38,8 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
   <div class="dialog" role="dialog" aria-label="Connect a device">
     <header class="dialog-head">
       <div>

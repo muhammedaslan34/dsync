@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"dsync/internal/client"
+	"dsync/internal/config"
 	"dsync/internal/proto"
 )
 
@@ -73,6 +74,10 @@ func (n *Node) SendFiles(ctx context.Context, peerID string, paths []string) err
 	if !ok {
 		return fmt.Errorf("unknown device %s", peerID)
 	}
+	t, paired := n.trusted(peerID)
+	if !paired {
+		return fmt.Errorf("pair with %s first", peer.Name)
+	}
 	for _, path := range paths {
 		st, err := os.Stat(path)
 		if err != nil {
@@ -95,13 +100,13 @@ func (n *Node) SendFiles(ctx context.Context, peerID string, paths []string) err
 	}
 	go func() {
 		for i, path := range paths {
-			n.sendFile(ctx, peer, ids[i], path)
+			n.sendFile(ctx, peer, t.Fingerprint, ids[i], path)
 		}
 	}()
 	return nil
 }
 
-func (n *Node) sendFile(ctx context.Context, peer Peer, id int64, path string) {
+func (n *Node) sendFile(ctx context.Context, peer Peer, fp string, id int64, path string) {
 	ctx, cancel := n.trackTransfer(ctx, id)
 	defer n.untrackTransfer(id, cancel)
 	if ctx.Err() != nil { // canceled while queued
@@ -123,22 +128,22 @@ func (n *Node) sendFile(ctx context.Context, peer Peer, id int64, path string) {
 
 	self := n.Self()
 	h := client.FileHeader{FromID: self.ID, FromName: self.Name, FromPort: self.Port, Name: filepath.Base(path), Size: st.Size()}
-	err = client.SendFile(ctx, peer.Addr, h, f, n.progressReporter(id, st.Size()))
+	err = n.cl.SendFile(ctx, peer.Addr, fp, h, f, n.progressReporter(id, st.Size()))
 	n.finishTransfer(ctx, id, "", err)
 }
 
-func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request) {
+func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
 	fromName, _ := url.QueryUnescape(r.Header.Get(proto.HeaderFromName))
-	fromID := r.Header.Get(proto.HeaderFromID)
 	fromPort, _ := strconv.Atoi(r.Header.Get(proto.HeaderFromPort))
 	rawName, _ := url.QueryUnescape(r.Header.Get(proto.HeaderFileName))
 	name := safeFileName(rawName)
 	size, err := strconv.ParseInt(r.Header.Get(proto.HeaderFileSize), 10, 64)
-	if err != nil || size < 0 || fromID == "" {
+	if err != nil || size < 0 {
 		http.Error(w, "missing or bad file headers", http.StatusBadRequest)
 		return
 	}
-	n.learnPeer(fromID, fromName, fromPort, r.RemoteAddr)
+	// The id comes from the pinned key, never from the headers.
+	fromName = n.learnPeer(from, fromName, fromPort, r.RemoteAddr)
 
 	dir := n.ReceiveDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -152,7 +157,7 @@ func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := n.addMessage(Message{
-		PeerID: fromID, PeerName: fromName, Incoming: true,
+		PeerID: from.ID, PeerName: fromName, Incoming: true,
 		File: &FileInfo{Name: name, Size: size, Status: StatusActive},
 	})
 	ctx, cancel := n.trackTransfer(r.Context(), m.ID)

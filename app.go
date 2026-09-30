@@ -24,10 +24,14 @@ type App struct {
 	statusErr string
 }
 
-func NewApp(cfg *config.Config) *App {
+func NewApp(cfg *config.Config) (*App, error) {
 	a := &App{}
-	a.node = node.New(cfg, a.emit)
-	return a
+	n, err := node.New(cfg, a.emit)
+	if err != nil {
+		return nil, err
+	}
+	a.node = n
+	return a, nil
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -126,3 +130,20 @@ func (a *App) FindOnNetwork() []node.Peer {
 	defer cancel()
 	return a.node.FindOnNetwork(ctx)
 }
+
+// Fingerprint is this device's key fingerprint, for display.
+func (a *App) Fingerprint() string { return a.node.Fingerprint() }
+
+// StartPair asks a device to pair and returns the code to compare. The
+// outcome arrives as a "pair:result" event.
+func (a *App) StartPair(peerID string) (string, error) {
+	return a.node.StartPair(a.ctx, peerID)
+}
+
+func (a *App) CancelPair(peerID string) { a.node.CancelPair(peerID) }
+
+func (a *App) AnswerPair(requestID string, accept bool) { a.node.AnswerPair(requestID, accept) }
+
+func (a *App) PendingPairs() []node.PairRequest { return a.node.PendingPairs() }
+
+func (a *App) Unpair(peerID string) error { return a.node.Unpair(a.ctx, peerID) }

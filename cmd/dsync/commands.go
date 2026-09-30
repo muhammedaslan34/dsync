@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -11,8 +12,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -20,6 +23,7 @@ import (
 	"dsync/internal/client"
 	"dsync/internal/config"
 	"dsync/internal/discovery"
+	"dsync/internal/identity"
 	"dsync/internal/node"
 	"dsync/internal/proto"
 )
@@ -31,14 +35,75 @@ func cmdServe(cfg *config.Config, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	n := node.New(cfg, func(event string, data any) {
-		if m, ok := data.(node.Message); ok && event == node.EventMessage && m.Incoming {
-			fmt.Printf("\n[%s] text from %s:\n%s\n", time.Now().Format("15:04:05"), m.PeerName, m.Text)
+	// Pairing requests are answered by typing y or n; the last one shown is
+	// the one answered.
+	var lastPair atomic.Value
+	n, err := node.New(cfg, func(event string, data any) {
+		switch event {
+		case node.EventMessage:
+			if m := data.(node.Message); m.Incoming && m.File == nil {
+				fmt.Printf("\n[%s] text from %s:\n%s\n", time.Now().Format("15:04:05"), m.PeerName, m.Text)
+			}
+		case node.EventMessageUpdate:
+			if m := data.(node.Message); m.Incoming && m.File != nil && m.File.Status != node.StatusActive {
+				fmt.Printf("[%s] file from %s: %s (%s)\n", time.Now().Format("15:04:05"), m.PeerName, m.File.Name, m.File.Status)
+			}
+		case node.EventPairRequest:
+			r := data.(node.PairRequest)
+			lastPair.Store(r.ID)
+			fmt.Printf("\n%s wants to pair. Code: %s\nAccept only if %s shows the same code. Accept? [y/N] ", r.Name, r.Code, r.Name)
 		}
 	})
+	if err != nil {
+		return err
+	}
+	go func() {
+		sc := bufio.NewScanner(os.Stdin)
+		for sc.Scan() {
+			if id, _ := lastPair.Load().(string); id != "" {
+				n.AnswerPair(id, strings.EqualFold(strings.TrimSpace(sc.Text()), "y"))
+				lastPair.Store("")
+			}
+		}
+	}()
 	self := n.Self()
-	log.Printf("serving as %q (id %s): http :%d, discovery udp :%d", self.Name, self.ID, self.Port, proto.DiscoveryPort)
+	log.Printf("serving as %q (key %s): tcp :%d, discovery udp :%d", self.Name, n.Fingerprint(), self.Port, proto.DiscoveryPort)
 	return n.Run(ctx)
+}
+
+func cmdPair(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("pair", flag.ExitOnError)
+	to := fs.String("to", "", "device name or id prefix")
+	addr := fs.String("addr", "", "pair directly with HOST[:PORT], skipping discovery")
+	fs.Parse(args)
+
+	cl, id, err := newClient()
+	if err != nil {
+		return err
+	}
+	t, err := resolveTarget(cfg, cl, *to, *addr)
+	if err != nil {
+		return err
+	}
+	if t.paired {
+		fmt.Printf("already paired with %s\n", t.name)
+		return nil
+	}
+	fmt.Printf("Pairing with %s. Code: %s\nAccept on %s if it shows the same code (waiting up to a minute)...\n",
+		t.name, identity.PairCode(id.Fingerprint, t.fp), t.name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	defer cancel()
+	resp, err := cl.Pair(ctx, t.addr, t.fp, proto.PairRequest{FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, OS: runtime.GOOS})
+	if err != nil {
+		return fmt.Errorf("pairing failed: %w", err)
+	}
+	cfg.Trust(config.TrustedPeer{ID: t.id, Name: resp.Name, Fingerprint: t.fp})
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	fmt.Printf("paired with %s\n", resp.Name)
+	return nil
 }
 
 func cmdDevices(cfg *config.Config, args []string) error {
@@ -55,9 +120,13 @@ func cmdDevices(cfg *config.Config, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tOS\tADDRESS\tID")
+	fmt.Fprintln(tw, "NAME\tOS\tADDRESS\tPAIRED\tID")
 	for _, p := range peers {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Name, p.OS, p.Addr(), p.ID)
+		paired := "no"
+		if _, ok := cfg.TrustedByID(p.ID); ok {
+			paired = "yes"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.OS, p.Addr(), paired, p.ID)
 	}
 	return tw.Flush()
 }
@@ -86,31 +155,79 @@ func cmdText(cfg *config.Config, args []string) error {
 		return fmt.Errorf("message is larger than %d bytes; send it as a file instead", proto.MaxTextBytes)
 	}
 
-	target, name, err := resolveTarget(cfg, *to, *addr)
+	cl, _, err := newClient()
+	if err != nil {
+		return err
+	}
+	t, err := resolvePaired(cfg, cl, *to, *addr)
 	if err != nil {
 		return err
 	}
 	msg := proto.TextMessage{FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, Text: text}
-	if err := client.SendText(context.Background(), target, msg); err != nil {
-		return fmt.Errorf("send to %s: %w", name, err)
+	if err := cl.SendText(context.Background(), t.addr, t.fp, msg); err != nil {
+		return fmt.Errorf("send to %s: %w", t.name, err)
 	}
-	fmt.Printf("sent to %s\n", name)
+	fmt.Printf("sent to %s\n", t.name)
 	return nil
 }
 
-// resolveTarget picks the HTTP address to send to, either from --addr or by
-// discovering devices and matching --to against their name or id.
-func resolveTarget(cfg *config.Config, to, addr string) (target, name string, err error) {
-	if addr != "" {
-		if _, _, err := net.SplitHostPort(addr); err != nil {
-			addr = net.JoinHostPort(addr, strconv.Itoa(proto.DefaultHTTPPort))
+func newClient() (*client.Client, *identity.Identity, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return nil, nil, err
+	}
+	id, err := identity.Load(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client.New(id), id, nil
+}
+
+type target struct {
+	addr, name, id, fp string
+	paired             bool
+}
+
+// resolvePaired is resolveTarget for commands that need a paired device.
+func resolvePaired(cfg *config.Config, cl *client.Client, to, addr string) (target, error) {
+	t, err := resolveTarget(cfg, cl, to, addr)
+	if err == nil && !t.paired {
+		err = fmt.Errorf("not paired with %s; run `dsync pair --to %q` or pair in the app", t.name, t.name)
+	}
+	return t, err
+}
+
+// resolveTarget finds the device to talk to, either from --addr or by
+// discovering devices and matching --to against their name or id, then asks
+// it for its id and key. A paired device must present its pinned key.
+func resolveTarget(cfg *config.Config, cl *client.Client, to, addr string) (target, error) {
+	if addr == "" {
+		var err error
+		if addr, err = discoverAddr(cfg, to); err != nil {
+			return target{}, err
 		}
-		return addr, addr, nil
+	} else if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, strconv.Itoa(proto.DefaultHTTPPort))
 	}
 
+	d, fp, err := cl.Info(context.Background(), addr)
+	if err != nil {
+		return target{}, fmt.Errorf("could not reach %s: %w", addr, err)
+	}
+	t := target{addr: addr, name: d.Name, id: d.ID, fp: fp}
+	if trusted, ok := cfg.TrustedByID(d.ID); ok {
+		if trusted.Fingerprint != fp {
+			return target{}, fmt.Errorf("%s: %w", d.Name, client.ErrIdentityChanged)
+		}
+		t.paired = true
+	}
+	return t, nil
+}
+
+func discoverAddr(cfg *config.Config, to string) (string, error) {
 	peers, err := discovery.Discover(context.Background(), selfDevice(cfg), 1200*time.Millisecond)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	var matches []discovery.Peer
 	for _, p := range peers {
@@ -121,17 +238,17 @@ func resolveTarget(cfg *config.Config, to, addr string) (target, name string, er
 	switch len(matches) {
 	case 0:
 		if to != "" {
-			return "", "", fmt.Errorf("no device named %q found (try `dsync devices`)", to)
+			return "", fmt.Errorf("no device named %q found (try `dsync devices`)", to)
 		}
-		return "", "", errors.New("no devices found (is `dsync serve` running on the other machine?)")
+		return "", errors.New("no devices found (is dsync running on the other machine?)")
 	case 1:
-		return matches[0].Addr(), matches[0].Name, nil
+		return matches[0].Addr(), nil
 	default:
 		names := make([]string, len(matches))
 		for i, p := range matches {
 			names[i] = p.Name
 		}
-		return "", "", fmt.Errorf("several devices found, pick one with --to: %s", strings.Join(names, ", "))
+		return "", fmt.Errorf("several devices found, pick one with --to: %s", strings.Join(names, ", "))
 	}
 }
 
@@ -151,21 +268,25 @@ func cmdSend(cfg *config.Config, args []string) error {
 		}
 	}
 
-	target, name, err := resolveTarget(cfg, *to, *addr)
+	cl, _, err := newClient()
+	if err != nil {
+		return err
+	}
+	t, err := resolvePaired(cfg, cl, *to, *addr)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	for _, p := range fs.Args() {
-		if err := sendOne(ctx, cfg, target, p); err != nil {
-			return fmt.Errorf("send %s to %s: %w", filepath.Base(p), name, err)
+		if err := sendOne(ctx, cfg, cl, t, p); err != nil {
+			return fmt.Errorf("send %s to %s: %w", filepath.Base(p), t.name, err)
 		}
 	}
 	return nil
 }
 
-func sendOne(ctx context.Context, cfg *config.Config, target, path string) error {
+func sendOne(ctx context.Context, cfg *config.Config, cl *client.Client, t target, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -192,7 +313,7 @@ func sendOne(ctx context.Context, cfg *config.Config, target, path string) error
 		fmt.Fprintf(os.Stderr, "\r%s  %5.1f%%  %s / %s  %s/s   ", base, pct, humanBytes(done), humanBytes(st.Size()), humanBytes(int64(rate)))
 	}
 	h := client.FileHeader{FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, Name: base, Size: st.Size()}
-	err = client.SendFile(ctx, target, h, f, progress)
+	err = cl.SendFile(ctx, t.addr, t.fp, h, f, progress)
 	fmt.Fprintln(os.Stderr)
 	return err
 }

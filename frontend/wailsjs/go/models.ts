@@ -83,6 +83,26 @@ export namespace node {
 		    return a;
 		}
 	}
+	export class PairRequest {
+	    id: string;
+	    peerId: string;
+	    name: string;
+	    os: string;
+	    code: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PairRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.peerId = source["peerId"];
+	        this.name = source["name"];
+	        this.os = source["os"];
+	        this.code = source["code"];
+	    }
+	}
 	export class Peer {
 	    id: string;
 	    name: string;
@@ -90,6 +110,7 @@ export namespace node {
 	    addr: string;
 	    manual: boolean;
 	    online: boolean;
+	    paired: boolean;
 	    lastSeen: number;
 	
 	    static createFrom(source: any = {}) {
@@ -104,6 +125,7 @@ export namespace node {
 	        this.addr = source["addr"];
 	        this.manual = source["manual"];
 	        this.online = source["online"];
+	        this.paired = source["paired"];
 	        this.lastSeen = source["lastSeen"];
 	    }
 	}
