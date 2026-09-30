@@ -118,6 +118,28 @@ type ControlStatus struct {
 	// AutoPIN means dsync there can enter a Moonlight PIN into Sunshine
 	// itself (a Sunshine login is saved).
 	AutoPIN bool `json:"auto_pin"`
+	// Configurable means dsync there can change Sunshine's settings (the
+	// login is saved and works): which screen, and matching resolution.
+	Configurable    bool      `json:"configurable"`
+	Displays        []Display `json:"displays,omitempty"` // Windows only
+	Screen          string    `json:"screen,omitempty"`   // current output_name ("" = main screen)
+	MatchResolution bool      `json:"match_resolution"`   // host switches to the stream's resolution
+}
+
+// Display is one of the controlled computer's screens.
+type Display struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Primary bool   `json:"primary"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+}
+
+// ControlConfigure changes the controlled computer's Sunshine settings
+// (POST /api/v1/control/configure).
+type ControlConfigure struct {
+	Screen          string `json:"screen"` // output_name; "" = main screen
+	MatchResolution bool   `json:"match_resolution"`
 }
 
 // ControlPINRequest hands over the PIN Moonlight is pairing with

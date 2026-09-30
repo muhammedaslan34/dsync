@@ -5,7 +5,7 @@
     PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
-    StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version,
+    StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version, ControlInfo,
     FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
     AllowSunshineFirewall,
   } from '../wailsjs/go/main/App'
@@ -345,10 +345,29 @@
     pasted = null
   }
 
-  async function startControl(d) {
-    control = { peer: d, state: { step: 'checking' } }
+  // Remote control starts with an options step; choices are remembered
+  // per device.
+  function loadControlOptions(id) {
+    const defaults = { screen: '', resolution: '', displayMode: 'fullscreen', fps: 60 }
     try {
-      await StartControl(d.id)
+      return { ...defaults, ...JSON.parse(localStorage.getItem('control:' + id) || '{}') }
+    } catch {
+      return defaults
+    }
+  }
+
+  async function startControl(d) {
+    control = { peer: d, state: { step: 'options' }, info: null, options: loadControlOptions(d.id) }
+    const info = await ControlInfo(d.id)
+    if (control?.peer.id === d.id) control.info = info
+  }
+
+  async function beginControl(opts) {
+    const d = control.peer
+    try { localStorage.setItem('control:' + d.id, JSON.stringify(opts)) } catch {}
+    control.state = { step: 'checking' }
+    try {
+      await StartControl(d.id, { ...opts })
     } catch (e) {
       control.state = { step: 'error', message: String(e) }
     }
@@ -729,8 +748,11 @@
   <ControlDialog
     peer={control.peer}
     state={control.state}
+    info={control.info}
+    options={control.options}
+    onStart={beginControl}
     onCancel={() => { CancelControl(control.peer.id); control = null }}
-    onRetry={() => startControl(control.peer)}
+    onRetry={() => beginControl(control.options)}
     onClose={() => (control = null)}
     onCopy={copy}
   />

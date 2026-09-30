@@ -180,3 +180,76 @@ func pickPairing(ps []pendingPairing, fromIP string) string {
 	}
 	return ""
 }
+
+// nonConfigKeys come back from GET /api/config but aren't settings; saving
+// them would write them into Sunshine's settings file.
+var nonConfigKeys = []string{"status", "platform", "version"}
+
+// Config returns Sunshine's settings.
+func (s SunshineAPI) Config(ctx context.Context) (map[string]any, error) {
+	cfg := map[string]any{}
+	code, err := s.do(ctx, http.MethodGet, "/api/config", "", nil, &cfg)
+	if err != nil {
+		return nil, err
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("sunshine answered %d", code)
+	}
+	for _, k := range nonConfigKeys {
+		delete(cfg, k)
+	}
+	return cfg, nil
+}
+
+// csrf gets a CSRF token, or "" from older Sunshine that doesn't use them.
+func (s SunshineAPI) csrf(ctx context.Context) (string, error) {
+	var tok struct {
+		Token string `json:"csrf_token"`
+	}
+	code, err := s.do(ctx, http.MethodGet, "/api/csrf-token", "", nil, &tok)
+	if err != nil {
+		return "", err
+	}
+	if code == http.StatusNotFound {
+		return "", nil
+	}
+	return tok.Token, nil
+}
+
+// SaveConfig replaces Sunshine's settings with cfg, which should be what
+// Config returned with changes: Sunshine rewrites its whole settings file
+// from it. Empty values remove a setting.
+func (s SunshineAPI) SaveConfig(ctx context.Context, cfg map[string]any) error {
+	tok, err := s.csrf(ctx)
+	if err != nil {
+		return err
+	}
+	var res struct {
+		Status bool `json:"status"`
+	}
+	code, err := s.do(ctx, http.MethodPost, "/api/config", tok, cfg, &res)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK || !res.Status {
+		return fmt.Errorf("sunshine didn't save its settings (%d)", code)
+	}
+	return nil
+}
+
+// Restart restarts Sunshine so new settings take effect. Sunshine may drop
+// the connection while restarting, which isn't an error.
+func (s SunshineAPI) Restart(ctx context.Context) error {
+	tok, err := s.csrf(ctx)
+	if err != nil {
+		return err
+	}
+	code, err := s.do(ctx, http.MethodPost, "/api/restart", tok, struct{}{}, nil)
+	if err != nil {
+		return nil
+	}
+	if code == http.StatusUnauthorized || code == http.StatusForbidden {
+		return fmt.Errorf("sunshine refused to restart (%d)", code)
+	}
+	return nil
+}

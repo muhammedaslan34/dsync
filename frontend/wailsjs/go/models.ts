@@ -106,6 +106,62 @@ export namespace node {
 	        this.error = source["error"];
 	    }
 	}
+	export class ControlInfo {
+	    os: string;
+	    configurable: boolean;
+	    displays: proto.Display[];
+	    screen: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ControlInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.os = source["os"];
+	        this.configurable = source["configurable"];
+	        this.displays = this.convertValues(source["displays"], proto.Display);
+	        this.screen = source["screen"];
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ControlOptions {
+	    screen: string;
+	    resolution: string;
+	    fps: number;
+	    displayMode: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ControlOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.screen = source["screen"];
+	        this.resolution = source["resolution"];
+	        this.fps = source["fps"];
+	        this.displayMode = source["displayMode"];
+	    }
+	}
 	export class FileInfo {
 	    name: string;
 	    size: number;
@@ -279,6 +335,26 @@ export namespace proto {
 	        this.name = source["name"];
 	        this.os = source["os"];
 	        this.port = source["port"];
+	    }
+	}
+	export class Display {
+	    id: string;
+	    name: string;
+	    primary: boolean;
+	    width: number;
+	    height: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Display(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.primary = source["primary"];
+	        this.width = source["width"];
+	        this.height = source["height"];
 	    }
 	}
 

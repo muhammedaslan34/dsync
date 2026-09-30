@@ -147,6 +147,14 @@ If you save the Sunshine login in dsync's Settings on the controlled computer, t
 pairing needs nobody there; otherwise dsync shows the PIN on that computer to type into
 Sunshine. The login is stored in dsync's settings file, readable only by your user.
 
+Before it starts, the control window lets you pick **which screen** to control (the other
+computer's monitors, when it has several), the **size** (smaller sizes make everything look
+bigger: a Windows PC switches its resolution to match while you control it, and back
+afterwards), fullscreen or window, and the frame rate. Choosing the screen and the
+bigger sizes on Windows use the Sunshine login saved in dsync on that PC. While
+controlling, Ctrl+Alt+Shift+Q stops and Ctrl+Alt+Shift+X switches fullscreen; to zoom into
+one spot, use the controlled computer's magnifier (Win and + on Windows).
+
 Only one dsync (app or `dsync serve`) can run per computer, since both use the same ports.
 
 Command-line tool:

@@ -35,6 +35,7 @@ func (n *Node) handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/control/status", n.paired(n.handleControlStatus))
 	mux.HandleFunc("POST /api/v1/control/start-sunshine", n.paired(n.handleStartSunshine))
 	mux.HandleFunc("POST /api/v1/control/pin", n.paired(n.handleControlPIN))
+	mux.HandleFunc("POST /api/v1/control/configure", n.paired(n.handleControlConfigure))
 	return mux
 }
 

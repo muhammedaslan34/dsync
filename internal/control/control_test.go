@@ -157,7 +157,7 @@ func TestMoonlightCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd.Wait()
-	if err := m.Stream("192.168.1.20"); err != nil {
+	if err := m.Stream("192.168.1.20", StreamOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -217,6 +217,113 @@ func TestUfwAllowsSunshine(t *testing.T) {
 	} {
 		if got := ufwAllowsSunshine(rules); got != want {
 			t.Errorf("%q: got %v", rules, got)
+		}
+	}
+}
+
+func TestParseDisplayLog(t *testing.T) {
+	log := `[2026-09-30 10:00:00.000]: Info: Sunshine version: 2026.928
+[2026-09-30 10:00:00.100]: Info: Currently available display devices:
+[{"device_id":"{old}","display_name":"\\\\.\\DISPLAY9","friendly_name":"Old","info":{"primary":true,"resolution":{"height":720,"width":1280}}}]
+[2026-09-30 10:05:00.100]: Info: Currently available display devices:
+[
+  {
+    "device_id": "{a1}",
+    "display_name": "\\\\.\\DISPLAY1",
+    "edid": {"manufacturer_id": "DEL", "product_code": "A0B1", "serial_number": 1},
+    "friendly_name": "DELL U2720Q",
+    "info": {"hdr_state": null, "origin_point": {"x": 0, "y": 0}, "primary": false,
+             "refresh_rate": {"numerator": 60, "denominator": 1},
+             "resolution": {"height": 2160, "width": 3840}, "resolution_scale": {"numerator": 150, "denominator": 100}},
+    "is_internal": false
+  },
+  {"device_id": "{b2}", "display_name": "\\\\.\\DISPLAY2", "friendly_name": "", "info": {"primary": true, "resolution": {"height": 1080, "width": 1920}}},
+  {"device_id": "{c3}", "display_name": "\\\\.\\DISPLAY3", "friendly_name": "TV (off)", "info": null}
+]
+[2026-09-30 10:05:00.200]: Info: next line of the log
+`
+	got := parseDisplayLog([]byte(log))
+	want := []Display{
+		{ID: "{b2}", Name: `\\.\DISPLAY2`, Primary: true, Width: 1920, Height: 1080},
+		{ID: "{a1}", Name: "DELL U2720Q", Width: 3840, Height: 2160},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("display %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if parseDisplayLog([]byte("no list here")) != nil {
+		t.Error("a log without a list should give none")
+	}
+}
+
+func TestSunshineConfigRoundTrip(t *testing.T) {
+	var mu sync.Mutex
+	saved := map[string]any{}
+	var tokens []string
+	restarted := false
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/api/csrf-token":
+			w.Write([]byte(`{"csrf_token":"tok"}`))
+		case "/api/config":
+			if r.Method == http.MethodGet {
+				w.Write([]byte(`{"status":true,"platform":"windows","version":"2026.9","sunshine_name":"PC","output_name":"{a1}"}`))
+				return
+			}
+			tokens = append(tokens, r.Header.Get("X-CSRF-Token"))
+			json.NewDecoder(r.Body).Decode(&saved)
+			w.Write([]byte(`{"status":true}`))
+		case "/api/restart":
+			tokens = append(tokens, r.Header.Get("X-CSRF-Token"))
+			restarted = true
+			// Sunshine dies mid-request when it restarts.
+			hj, _ := w.(http.Hijacker)
+			c, _, _ := hj.Hijack()
+			c.Close()
+		}
+	}))
+	defer srv.Close()
+	api := SunshineAPI{User: "u", Password: "p", Base: srv.URL}
+
+	cfg, err := api.Config(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, bad := cfg["status"]; bad || cfg["sunshine_name"] != "PC" {
+		t.Fatalf("config: %v", cfg)
+	}
+	cfg["output_name"] = "{b2}"
+	if err := api.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Restart(context.Background()); err != nil {
+		t.Fatalf("a dropped connection during restart is fine: %v", err)
+	}
+	if saved["output_name"] != "{b2}" || saved["sunshine_name"] != "PC" || saved["platform"] != nil {
+		t.Errorf("saved %v (other settings must be kept, status fields dropped)", saved)
+	}
+	if !restarted || len(tokens) != 2 || tokens[0] != "tok" || tokens[1] != "tok" {
+		t.Errorf("restarted=%v tokens=%v", restarted, tokens)
+	}
+}
+
+func TestStreamOptionArgs(t *testing.T) {
+	for _, c := range []struct {
+		o    StreamOptions
+		want string
+	}{
+		{StreamOptions{}, ""},
+		{StreamOptions{Resolution: "1280x720", FPS: 60, DisplayMode: "fullscreen", MatchHost: true}, "--resolution 1280x720 --fps 60 --display-mode fullscreen --game-optimization"},
+		{StreamOptions{DisplayMode: "evil; rm -rf"}, ""},
+	} {
+		if got := strings.Join(c.o.args(), " "); got != c.want {
+			t.Errorf("%+v: %q", c.o, got)
 		}
 	}
 }

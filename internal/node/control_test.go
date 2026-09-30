@@ -24,6 +24,21 @@ type controlFakes struct {
 	dir     string
 	web     *httptest.Server
 	pinSeen chan string // PINs Sunshine received through its API
+
+	mu       sync.Mutex
+	config   map[string]any // Sunshine's settings file
+	saves    int
+	restarts int
+}
+
+// withStatus is what GET /api/config returns: the settings plus fields
+// that aren't settings.
+func (f *controlFakes) withStatus() map[string]any {
+	out := map[string]any{"status": true, "platform": "windows", "version": "2026.9"}
+	for k, v := range f.config {
+		out[k] = v
+	}
+	return out
 }
 
 func newControlFakes(t *testing.T, withMoonlight, withSunshine bool) *controlFakes {
@@ -31,7 +46,7 @@ func newControlFakes(t *testing.T, withMoonlight, withSunshine bool) *controlFak
 	if runtime.GOOS == "windows" {
 		t.Skip("uses shell scripts")
 	}
-	f := &controlFakes{dir: t.TempDir(), pinSeen: make(chan string, 4)}
+	f := &controlFakes{dir: t.TempDir(), pinSeen: make(chan string, 4), config: map[string]any{"sunshine_name": "PC"}}
 	paired := filepath.Join(f.dir, "paired")
 	if withMoonlight {
 		script := `#!/bin/sh
@@ -73,8 +88,21 @@ exit 0
 			return
 		}
 		switch {
+		case r.URL.Path == "/api/config" && r.Method == http.MethodGet:
+			f.mu.Lock()
+			json.NewEncoder(w).Encode(f.withStatus())
+			f.mu.Unlock()
 		case r.URL.Path == "/api/config":
-			w.Write([]byte("{}"))
+			f.mu.Lock()
+			f.config = map[string]any{}
+			json.NewDecoder(r.Body).Decode(&f.config)
+			f.saves++
+			f.mu.Unlock()
+			w.Write([]byte(`{"status":true}`))
+		case r.URL.Path == "/api/restart":
+			f.mu.Lock()
+			f.restarts++
+			f.mu.Unlock()
 		case r.URL.Path == "/api/csrf-token":
 			w.Write([]byte(`{"csrf_token":"t"}`))
 		case r.URL.Path == "/api/pin" && r.Method == http.MethodGet:
@@ -200,7 +228,7 @@ func TestControlPairsAutomaticallyAndStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := a.StartControl(t.Context(), b.cfg.ID); err != nil {
+	if err := a.StartControl(t.Context(), b.cfg.ID, ControlOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if s := la.waitControl(t); s.Step != "done" {
@@ -215,7 +243,7 @@ func TestControlPairsAutomaticallyAndStreams(t *testing.T) {
 
 	// Next time it is already paired: straight to the stream.
 	la.reset()
-	a.StartControl(t.Context(), b.cfg.ID)
+	a.StartControl(t.Context(), b.cfg.ID, ControlOptions{})
 	la.waitControl(t)
 	if strings.Count(f.calls(), "pair ") != 1 {
 		t.Errorf("paired again:\n%s", f.calls())
@@ -227,7 +255,7 @@ func TestControlManualPIN(t *testing.T) {
 	sunshineUp(t)
 	a, b, la, lb := controlPair(t)
 
-	a.StartControl(t.Context(), b.cfg.ID)
+	a.StartControl(t.Context(), b.cfg.ID, ControlOptions{})
 	// The user at the other computer reads the PIN dsync shows there and
 	// types it into Sunshine.
 	var shown []ControlPIN
@@ -257,7 +285,7 @@ func TestControlMissingPrograms(t *testing.T) {
 	t.Run("no moonlight here", func(t *testing.T) {
 		newControlFakes(t, false, true)
 		a, b, la, _ := controlPair(t)
-		a.StartControl(t.Context(), b.cfg.ID)
+		a.StartControl(t.Context(), b.cfg.ID, ControlOptions{})
 		s := la.waitControl(t)
 		if s.Step != "error" || !strings.Contains(s.Message, "Moonlight") || !strings.Contains(s.Hint, "moonlight") {
 			t.Errorf("got %+v", s)
@@ -267,7 +295,7 @@ func TestControlMissingPrograms(t *testing.T) {
 		newControlFakes(t, true, false)
 		a, b, la, _ := controlPair(t)
 		a.peers[b.cfg.ID].OS = "windows"
-		a.StartControl(t.Context(), b.cfg.ID)
+		a.StartControl(t.Context(), b.cfg.ID, ControlOptions{})
 		s := la.waitControl(t)
 		if s.Step != "error" || !strings.Contains(s.Message, "Sunshine isn't installed") || !strings.Contains(s.Hint, "winget install LizardByte.Sunshine") {
 			t.Errorf("got %+v", s)
@@ -281,9 +309,61 @@ func TestControlFirewallBlocksSunshine(t *testing.T) {
 	control.SunshineReachable = func(string) bool { return false } // its firewall drops us
 	a, b, la, _ := controlPair(t)
 	a.peers[b.cfg.ID].OS = "linux"
-	a.StartControl(t.Context(), b.cfg.ID)
+	a.StartControl(t.Context(), b.cfg.ID, ControlOptions{})
 	s := la.waitControl(t)
 	if s.Step != "error" || !strings.Contains(s.Message, "firewall blocks Sunshine") || !strings.Contains(s.Hint, "ufw allow") {
 		t.Errorf("got %+v", s)
+	}
+}
+
+func TestControlChoosesScreenAndZoom(t *testing.T) {
+	f := newControlFakes(t, true, true)
+	sunshineUp(t)
+	// Sunshine's log on the controlled PC lists two screens.
+	logPath := filepath.Join(f.dir, "sunshine.log")
+	os.WriteFile(logPath, []byte(`[x]: Info: Currently available display devices:
+[{"device_id":"{a1}","display_name":"\\\\.\\DISPLAY1","friendly_name":"DELL U2720Q","info":{"primary":false,"resolution":{"width":3840,"height":2160}}},
+ {"device_id":"{b2}","display_name":"\\\\.\\DISPLAY2","friendly_name":"Laptop screen","info":{"primary":true,"resolution":{"width":1920,"height":1080}}}]
+`), 0o644)
+	f.config["log_path"] = logPath
+
+	a, b, la, _ := controlPair(t)
+	a.peers[b.cfg.ID].OS = "windows"
+	b.cfg.SunshineWeb = f.web.URL
+	if err := b.SetSunshineLogin(t.Context(), "admin", "pw"); err != nil {
+		t.Fatal(err)
+	}
+
+	info := a.ControlInfo(t.Context(), b.cfg.ID)
+	if !info.Configurable || len(info.Displays) != 2 || info.Displays[0].Name != "Laptop screen" || !info.Displays[0].Primary {
+		t.Fatalf("control info: %+v", info)
+	}
+
+	opts := ControlOptions{Screen: "{a1}", Resolution: "1280x720", FPS: 60, DisplayMode: "fullscreen"}
+	a.StartControl(t.Context(), b.cfg.ID, opts)
+	if s := la.waitControl(t); s.Step != "done" {
+		t.Fatalf("ended with %+v", s)
+	}
+	f.mu.Lock()
+	cfg, saves, restarts := f.config, f.saves, f.restarts
+	f.mu.Unlock()
+	if cfg["output_name"] != "{a1}" || cfg["dd_resolution_option"] != "auto" || cfg["sunshine_name"] != "PC" || cfg["status"] != nil {
+		t.Errorf("Sunshine settings: %v", cfg)
+	}
+	if saves != 1 || restarts != 1 {
+		t.Errorf("saves=%d restarts=%d, want 1 and 1", saves, restarts)
+	}
+	if want := "stream 127.0.0.1 Desktop --resolution 1280x720 --fps 60 --display-mode fullscreen --game-optimization"; !strings.Contains(f.calls(), want) {
+		t.Errorf("moonlight calls:\n%s\nwant %q", f.calls(), want)
+	}
+
+	// Same choices again: nothing to change, so no restart.
+	la.reset()
+	a.StartControl(t.Context(), b.cfg.ID, opts)
+	la.waitControl(t)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saves != 1 || f.restarts != 1 {
+		t.Errorf("restarted Sunshine again for the same settings: saves=%d restarts=%d", f.saves, f.restarts)
 	}
 }

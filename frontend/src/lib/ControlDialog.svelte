@@ -2,17 +2,33 @@
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
 
-  // state: the latest ControlState for this device ({ step, message, pin, hint })
-  let { peer, state, onCancel, onRetry, onClose, onCopy } = $props()
+  // state: the latest ControlState for this device ({ step, message, pin, hint }),
+  // or { step: 'options' } before starting. info: what the device offers.
+  let { peer, state, info, options, onStart, onCancel, onRetry, onClose, onCopy } = $props()
+
+  const sizes = [
+    ['', 'Full size', 'Sharpest; everything at its normal size'],
+    ['1600x900', 'Bigger', 'Text and windows look larger'],
+    ['1280x720', 'Much bigger', 'Easiest to read on a small screen'],
+  ]
+  // Only a Windows PC switches its own resolution, which is what makes
+  // things bigger; elsewhere a smaller stream just looks softer.
+  let canZoom = $derived(info?.os === 'windows' && info?.configurable)
+  let screens = $derived(info?.displays ?? [])
+
+  function res(d) {
+    return d.width && d.height ? `${d.width}×${d.height}` : ''
+  }
 
   const steps = [
     ['checking', 'Check Moonlight and Sunshine'],
     ['starting', 'Start Sunshine'],
+    ['configuring', 'Set up the screen'],
     ['pairing', 'Pair (only the first time)'],
     ['streaming', 'Open Moonlight'],
   ]
   let order = $derived(steps.findIndex(([s]) => s === state.step))
-  let finished = $derived(['done', 'error', 'canceled'].includes(state.step))
+  let finished = $derived(['done', 'error', 'canceled', 'options'].includes(state.step))
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -29,7 +45,67 @@
       <button class="icon-btn" title="Close" onclick={finished ? onClose : onCancel}><Icon name="x" /></button>
     </header>
 
-    {#if state.step === 'error'}
+    {#if state.step === 'options'}
+      {#if !info}
+        <p class="muted small control-msg"><span class="spinner"></span> Asking {peer.name} which screens it has…</p>
+      {:else}
+        <div class="ctl-options">
+          {#if screens.length > 1}
+            <div class="opt">
+              <span class="opt-label">Screen</span>
+              <div class="screen-list">
+                {#each screens as d (d.id)}
+                  <button class="screen" class:on={options.screen === d.id || (!options.screen && (info.screen ? info.screen === d.id : d.primary))}
+                    disabled={!info.configurable} onclick={() => (options.screen = d.id)}>
+                    <Icon name="monitor" size={18} />
+                    <span class="screen-text"><b>{d.name}</b><span class="muted small">{res(d)}{d.primary ? ' · main' : ''}</span></span>
+                  </button>
+                {/each}
+              </div>
+              {#if !info.configurable}<p class="muted small">To choose, save the Sunshine login in dsync on {peer.name} (Settings → Remote control).</p>{/if}
+            </div>
+          {/if}
+
+          <div class="opt">
+            <span class="opt-label">Size</span>
+            <div class="segmented wide">
+              {#each sizes as [value, label] (value)}
+                <button class:on={options.resolution === value} onclick={() => (options.resolution = value)}>{label}</button>
+              {/each}
+            </div>
+            <p class="muted small">
+              {#if options.resolution && canZoom}{peer.name}'s screen switches to this size while you control it, so everything looks bigger. It switches back afterwards.
+              {:else if options.resolution}A smaller stream is lighter on the network, but doesn't enlarge {peer.name}'s screen{info.os === 'windows' ? ' unless its Sunshine login is saved in dsync' : ''}.
+              {:else}{sizes[0][2]}.{/if}
+            </p>
+          </div>
+
+          <div class="opt-row">
+            <div class="opt">
+              <span class="opt-label">Window</span>
+              <div class="segmented">
+                <button class:on={options.displayMode === 'fullscreen'} onclick={() => (options.displayMode = 'fullscreen')}>Fullscreen</button>
+                <button class:on={options.displayMode === 'windowed'} onclick={() => (options.displayMode = 'windowed')}>Window</button>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Smoothness</span>
+              <div class="segmented">
+                {#each [30, 60, 120] as fps (fps)}
+                  <button class:on={options.fps === fps} onclick={() => (options.fps = fps)}>{fps} fps</button>
+                {/each}
+              </div>
+            </div>
+          </div>
+
+          <div class="ctl-tips muted small">
+            <div><b>While controlling:</b> Ctrl+Alt+Shift+Q stops, Ctrl+Alt+Shift+X switches fullscreen.</div>
+            <div><b>Zoom into one spot:</b> {info.os === 'windows' ? 'press Win and + on the PC (Windows Magnifier); Win and Esc turns it off.' : 'press Super+Alt+8 on that computer to turn on GNOME zoom.'}</div>
+          </div>
+          {#if info.error}<p class="form-error"><Icon name="alert" size={14} /> {info.error}</p>{/if}
+        </div>
+      {/if}
+    {:else if state.step === 'error'}
       <div class="control-error">
         <Icon name="alert" size={18} />
         <div>
@@ -62,7 +138,10 @@
     {/if}
 
     <div class="dialog-actions">
-      {#if state.step === 'error'}
+      {#if state.step === 'options'}
+        <button class="btn secondary" onclick={onClose}>Cancel</button>
+        <button class="btn primary" disabled={!info} onclick={() => onStart(options)}><Icon name="monitor" size={15} /> Start</button>
+      {:else if state.step === 'error'}
         <button class="btn secondary" onclick={onClose}>Close</button>
         <button class="btn primary" onclick={onRetry}>Try again</button>
       {:else if finished}

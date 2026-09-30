@@ -220,3 +220,13 @@ func (c *Client) ControlPIN(ctx context.Context, addr, fp string, r proto.Contro
 	err := c.postJSON(ctx, addr, fp, "/api/v1/control/pin", r, &res, http.StatusOK)
 	return res, err
 }
+
+// ControlConfigure asks a paired device to change its Sunshine settings
+// (restarting Sunshine if anything changed).
+func (c *Client) ControlConfigure(ctx context.Context, addr, fp string, r proto.ControlConfigure) (proto.ControlStatus, error) {
+	var st proto.ControlStatus
+	ctx, cancel := withDefaultTimeout(ctx, 60*time.Second)
+	defer cancel()
+	err := c.postJSON(ctx, addr, fp, "/api/v1/control/configure", r, &st, http.StatusOK)
+	return st, err
+}

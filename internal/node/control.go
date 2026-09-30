@@ -134,15 +134,89 @@ func (n *Node) SetSunshineLogin(ctx context.Context, user, password string) erro
 
 // --- the controlled computer ---
 
-func (n *Node) hostStatus() proto.ControlStatus {
+func (n *Node) hostStatus(ctx context.Context) proto.ControlStatus {
 	_, installed := control.FindSunshine()
-	_, login := n.sunshineAPI()
+	api, login := n.sunshineAPI()
 	running := control.SunshineRunning()
-	return proto.ControlStatus{SunshineInstalled: installed || running, SunshineRunning: running, AutoPIN: login}
+	st := proto.ControlStatus{SunshineInstalled: installed || running, SunshineRunning: running, AutoPIN: login}
+	if !login || !running {
+		return st
+	}
+	// With the login, report the screens and current settings, so the
+	// other computer can offer a choice.
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cfg, err := api.Config(cctx)
+	if err != nil {
+		return st
+	}
+	st.Configurable = true
+	st.Screen, _ = cfg["output_name"].(string)
+	st.MatchResolution = cfg["dd_resolution_option"] == "auto"
+	if ds, err := control.Displays(cfg); err == nil {
+		for _, d := range ds {
+			st.Displays = append(st.Displays, proto.Display(d))
+		}
+	}
+	return st
 }
 
 func (n *Node) handleControlStatus(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
-	writeJSON(w, n.hostStatus())
+	writeJSON(w, n.hostStatus(r.Context()))
+}
+
+// handleControlConfigure changes this computer's Sunshine settings for a
+// paired device about to control it: which screen it shows, and whether
+// this computer switches to the stream's resolution (which makes things
+// look bigger there). Sunshine restarts only if something changed.
+func (n *Node) handleControlConfigure(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
+	var req proto.ControlConfigure
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	api, login := n.sunshineAPI()
+	if !login {
+		http.Error(w, "save the Sunshine login in dsync on "+n.Self().Name+" first", http.StatusConflict)
+		return
+	}
+	cfg, err := api.Config(r.Context())
+	if err != nil {
+		http.Error(w, "could not read Sunshine's settings: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	changed := false
+	if cur, _ := cfg["output_name"].(string); cur != req.Screen {
+		cfg["output_name"] = req.Screen // "" removes it: the main screen
+		changed = true
+	}
+	want := "disabled"
+	if req.MatchResolution {
+		want = "auto"
+	}
+	if cur, _ := cfg["dd_resolution_option"].(string); cur != want && !(cur == "" && want == "disabled") {
+		cfg["dd_resolution_option"] = want
+		changed = true
+	}
+	if changed {
+		if err := api.SaveConfig(r.Context(), cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := api.Restart(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		// Wait for it to go away and come back.
+		time.Sleep(1500 * time.Millisecond)
+		for range 60 {
+			if control.SunshineRunning() {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	writeJSON(w, n.hostStatus(r.Context()))
 }
 
 func (n *Node) handleStartSunshine(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
@@ -155,7 +229,7 @@ func (n *Node) handleStartSunshine(w http.ResponseWriter, r *http.Request, from 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, n.hostStatus())
+	writeJSON(w, n.hostStatus(r.Context()))
 }
 
 // handleControlPIN takes the PIN a paired device's Moonlight is pairing
@@ -194,9 +268,52 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // --- the controlling computer ---
 
+// ControlOptions are chosen before controlling a device.
+type ControlOptions struct {
+	Screen string `json:"screen"` // the device's Sunshine output_name; "" = keep its current one
+	// Resolution is the stream's size, e.g. "1280x720"; "" = Moonlight's
+	// setting. A smaller size makes things look bigger: on Windows the
+	// controlled PC switches to it while controlled.
+	Resolution  string `json:"resolution"`
+	FPS         int    `json:"fps"`
+	DisplayMode string `json:"displayMode"`
+}
+
+// ControlInfo tells the options dialog what the device offers.
+type ControlInfo struct {
+	OS           string          `json:"os"`
+	Configurable bool            `json:"configurable"`
+	Displays     []proto.Display `json:"displays"`
+	Screen       string          `json:"screen"`
+	Error        string          `json:"error,omitempty"`
+}
+
+// ControlInfo asks a device which screens it has, for the options dialog.
+func (n *Node) ControlInfo(ctx context.Context, peerID string) ControlInfo {
+	n.mu.Lock()
+	p := n.peers[peerID]
+	var peer Peer
+	if p != nil {
+		peer = *p
+	}
+	n.mu.Unlock()
+	t, paired := n.trusted(peerID)
+	if p == nil || !paired {
+		return ControlInfo{Error: "not paired"}
+	}
+	info := ControlInfo{OS: peer.OS}
+	st, err := n.cl.ControlStatus(ctx, n.peerAddr(peer), t.Fingerprint)
+	if err != nil {
+		info.Error = err.Error()
+		return info
+	}
+	info.Configurable, info.Displays, info.Screen = st.Configurable, st.Displays, st.Screen
+	return info
+}
+
 // StartControl opens a Moonlight window controlling peerID's desktop,
 // setting things up first if needed. Progress arrives as EventControl.
-func (n *Node) StartControl(ctx context.Context, peerID string) error {
+func (n *Node) StartControl(ctx context.Context, peerID string, opts ControlOptions) error {
 	n.mu.Lock()
 	p, ok := n.peers[peerID]
 	var peer Peer
@@ -228,7 +345,7 @@ func (n *Node) StartControl(ctx context.Context, peerID string) error {
 			n.mu.Unlock()
 		}()
 		state := func(step, msg string) { n.emit(EventControl, ControlState{PeerID: peerID, Step: step, Message: msg}) }
-		err := n.runControl(ctx, peer, t.Fingerprint, state)
+		err := n.runControl(ctx, peer, t.Fingerprint, opts, state)
 		switch {
 		case ctx.Err() != nil:
 			state("canceled", "")
@@ -265,7 +382,7 @@ func (e *controlError) Error() string { return e.msg }
 // Hint says how to fix the problem, e.g. an install command.
 func (e *controlError) Hint() string { return e.hint }
 
-func (n *Node) runControl(ctx context.Context, peer Peer, fp string, state func(step, msg string)) error {
+func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts ControlOptions, state func(step, msg string)) error {
 	state("checking", "Checking Moonlight here and Sunshine on "+peer.Name+"…")
 	ml, ok := control.FindMoonlight()
 	if !ok {
@@ -294,6 +411,27 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, state func(
 	if !control.SunshineReachable(host) {
 		return &controlError{"Sunshine is running on " + peer.Name + ", but this computer can't reach it: its firewall blocks Sunshine.", control.SunshineFirewallHint(peer.OS)}
 	}
+
+	// A smaller stream only makes things bigger if the host switches to
+	// it, which Sunshine does on Windows.
+	stream := control.StreamOptions{Resolution: opts.Resolution, FPS: opts.FPS, DisplayMode: opts.DisplayMode}
+	match := opts.Resolution != "" && strings.EqualFold(peer.OS, "windows")
+	screen := opts.Screen
+	if screen == "" {
+		screen = st.Screen // keep the current choice unless asked
+	}
+	if st.Configurable && (screen != st.Screen || match != st.MatchResolution) {
+		state("configuring", "Setting up the screen on "+peer.Name+"…")
+		if _, err := n.cl.ControlConfigure(ctx, addr, fp, proto.ControlConfigure{Screen: screen, MatchResolution: match}); err != nil {
+			return fmt.Errorf("could not change Sunshine's settings on %s: %w", peer.Name, err)
+		}
+		for i := 0; i < 40 && !control.SunshineReachable(host); i++ {
+			time.Sleep(500 * time.Millisecond)
+		}
+		st.MatchResolution = match
+	}
+	stream.MatchHost = st.Configurable && st.MatchResolution
+
 	pairedML, err := ml.Paired(ctx, host)
 	if err != nil {
 		return err
@@ -305,7 +443,7 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, state func(
 	}
 
 	state("streaming", "Opening Moonlight…")
-	return ml.Stream(host)
+	return ml.Stream(host, stream)
 }
 
 // pairMoonlight pairs Moonlight with Sunshine on the peer once, sending the
@@ -383,7 +521,7 @@ func sunshineHintFor(os string) string {
 // RunControl is StartControl for a device that may not be in the device
 // list (the command-line tool), and waits until Moonlight opens.
 func (n *Node) RunControl(ctx context.Context, peer Peer, fp string) error {
-	return n.runControl(ctx, peer, fp, func(step, msg string) {
+	return n.runControl(ctx, peer, fp, ControlOptions{}, func(step, msg string) {
 		n.emit(EventControl, ControlState{PeerID: peer.ID, Step: step, Message: msg})
 	})
 }

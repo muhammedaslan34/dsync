@@ -256,7 +256,16 @@ func (a *App) SetAppMenu(on bool) error      { return setAppMenu(on) }
 // StartControl opens Moonlight controlling a paired device, setting up
 // Sunshine and pairing first if needed; progress arrives as "control"
 // events.
-func (a *App) StartControl(peerID string) error { return a.node.StartControl(a.ctx, peerID) }
+func (a *App) StartControl(peerID string, opts node.ControlOptions) error {
+	return a.node.StartControl(a.ctx, peerID, opts)
+}
+
+// ControlInfo asks a device which screens it offers for remote control.
+func (a *App) ControlInfo(peerID string) node.ControlInfo {
+	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+	return a.node.ControlInfo(ctx, peerID)
+}
 
 func (a *App) CancelControl(peerID string) { a.node.CancelControl(peerID) }
 

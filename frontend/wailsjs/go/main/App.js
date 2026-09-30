@@ -42,6 +42,10 @@ export function ClipboardStatus() {
   return window['go']['main']['App']['ClipboardStatus']();
 }
 
+export function ControlInfo(arg1) {
+  return window['go']['main']['App']['ControlInfo'](arg1);
+}
+
 export function FindOnNetwork() {
   return window['go']['main']['App']['FindOnNetwork']();
 }
@@ -170,8 +174,8 @@ export function SetSunshineLogin(arg1, arg2) {
   return window['go']['main']['App']['SetSunshineLogin'](arg1, arg2);
 }
 
-export function StartControl(arg1) {
-  return window['go']['main']['App']['StartControl'](arg1);
+export function StartControl(arg1, arg2) {
+  return window['go']['main']['App']['StartControl'](arg1, arg2);
 }
 
 export function StartPair(arg1) {

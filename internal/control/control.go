@@ -119,10 +119,39 @@ func (m Moonlight) StartPair(host, pin string) (*exec.Cmd, error) {
 	return cmd, cmd.Start()
 }
 
+// StreamOptions are how the stream looks. Zero values keep Moonlight's own
+// settings.
+type StreamOptions struct {
+	Resolution  string `json:"resolution"`  // "1920x1080", "" = Moonlight's setting
+	FPS         int    `json:"fps"`         // 0 = Moonlight's setting
+	DisplayMode string `json:"displayMode"` // fullscreen, windowed, borderless, "" = Moonlight's setting
+	// MatchHost asks Sunshine to switch the host's screen to the stream's
+	// resolution (needs Moonlight's "optimize game settings").
+	MatchHost bool `json:"-"`
+}
+
+func (o StreamOptions) args() []string {
+	var a []string
+	if o.Resolution != "" {
+		a = append(a, "--resolution", o.Resolution)
+	}
+	if o.FPS > 0 {
+		a = append(a, "--fps", fmt.Sprint(o.FPS))
+	}
+	switch o.DisplayMode {
+	case "fullscreen", "windowed", "borderless":
+		a = append(a, "--display-mode", o.DisplayMode)
+	}
+	if o.MatchHost {
+		a = append(a, "--game-optimization")
+	}
+	return a
+}
+
 // Stream opens a Moonlight window controlling host's desktop. It returns
 // once Moonlight has started; the stream runs on its own.
-func (m Moonlight) Stream(host string) error {
-	cmd := m.command(nil, "stream", host, DesktopApp)
+func (m Moonlight) Stream(host string, o StreamOptions) error {
+	cmd := m.command(nil, append([]string{"stream", host, DesktopApp}, o.args()...)...)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

@@ -25,6 +25,8 @@ export function ChooseReceiveDir():Promise<string>;
 
 export function ClipboardStatus():Promise<node.ClipboardStatus>;
 
+export function ControlInfo(arg1:string):Promise<node.ControlInfo>;
+
 export function FindOnNetwork():Promise<Array<node.Peer>>;
 
 export function Fingerprint():Promise<string>;
@@ -89,7 +91,7 @@ export function SetName(arg1:string):Promise<void>;
 
 export function SetSunshineLogin(arg1:string,arg2:string):Promise<void>;
 
-export function StartControl(arg1:string):Promise<void>;
+export function StartControl(arg1:string,arg2:node.ControlOptions):Promise<void>;
 
 export function StartPair(arg1:string):Promise<string>;
 
