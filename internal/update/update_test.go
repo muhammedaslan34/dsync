@@ -162,3 +162,65 @@ func TestAssetNames(t *testing.T) {
 		}
 	}
 }
+
+// When the API refuses (rate limit), the release is read from GitHub's
+// website: the latest-release redirect and the release's SHA256SUMS.
+func TestLatestFallsBackToWebsite(t *testing.T) {
+	data := bytes.Repeat([]byte("dsync"), 40000)
+	sum := sha256.Sum256(data)
+	name := "dsync-1.0.7-linux-x86_64.tar.gz"
+	var apiCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/" + Repo + "/releases/latest":
+			apiCalls++
+			http.Error(w, "API rate limit exceeded", http.StatusForbidden)
+		case "/" + Repo + "/releases/latest":
+			http.Redirect(w, r, "/"+Repo+"/releases/tag/v1.0.7", http.StatusFound)
+		case "/" + Repo + "/releases/download/v1.0.7/SHA256SUMS":
+			fmt.Fprintf(w, "%s  %s\n%s  ../evil\n", hex.EncodeToString(sum[:]), name, strings.Repeat("1", 64))
+		case "/" + Repo + "/releases/download/v1.0.7/" + name:
+			w.Write(data)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	oldAPI, oldWeb := apiBase, webBase
+	apiBase, webBase = srv.URL, srv.URL
+	t.Cleanup(func() { apiBase, webBase = oldAPI, oldWeb })
+
+	r, err := Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if apiCalls != 1 || r.Version != "1.0.7" || !strings.HasSuffix(r.URL, "/releases/tag/v1.0.7") {
+		t.Fatalf("release %+v after %d API calls", r, apiCalls)
+	}
+	if _, ok := r.asset("../evil"); ok {
+		t.Error("a path in SHA256SUMS became an asset")
+	}
+	var last, total int64
+	path, err := Download(context.Background(), r, name, t.TempDir(), func(d, tot int64) { last, total = d, tot })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, data) || last != int64(len(data)) || total != int64(len(data)) {
+		t.Errorf("downloaded %d bytes, progress %d/%d", len(got), last, total)
+	}
+}
+
+// If both the API and the website fail, the error says it's GitHub's limit.
+func TestRateLimitError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+	oldAPI, oldWeb := apiBase, webBase
+	apiBase, webBase = srv.URL, srv.URL
+	t.Cleanup(func() { apiBase, webBase = oldAPI, oldWeb })
+	_, err := Latest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "limiting requests") {
+		t.Fatalf("want a rate-limit error, got %v", err)
+	}
+}
