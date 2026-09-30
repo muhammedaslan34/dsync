@@ -13,14 +13,15 @@ import (
 // pacman (through pkexec's password window) on Arch, or a per-user Flatpak.
 
 type pkg struct {
+	brew    string // Homebrew cask, macOS
 	winget  string // winget package id
 	pacman  string // Arch package name
 	flatpak string // Flathub app id
 }
 
 var packages = map[string]pkg{
-	"moonlight": {"MoonlightGameStreamingProject.Moonlight", "moonlight-qt", "com.moonlight_stream.Moonlight"},
-	"sunshine":  {"LizardByte.Sunshine", "sunshine", "dev.lizardbyte.app.Sunshine"},
+	"moonlight": {"moonlight", "MoonlightGameStreamingProject.Moonlight", "moonlight-qt", "com.moonlight_stream.Moonlight"},
+	"sunshine":  {"", "LizardByte.Sunshine", "sunshine", "dev.lizardbyte.app.Sunshine"},
 }
 
 // installCommand picks how to install program on this computer.
@@ -36,6 +37,10 @@ func installCommand(program string) ([]string, error) {
 			"--accept-package-agreements", "--accept-source-agreements"}, nil
 	case runtimeOS == "windows":
 		return nil, errors.New("winget isn't available; " + InstallHint(program))
+	case runtimeOS == "darwin" && p.brew != "" && has("brew"):
+		return []string{"brew", "install", "--cask", p.brew}, nil
+	case runtimeOS == "darwin":
+		return nil, errors.New(InstallHint(program))
 	case has("pacman") && has("pkexec"):
 		return []string{"pkexec", "pacman", "-S", "--needed", "--noconfirm", p.pacman}, nil
 	case has("flatpak"):

@@ -8,7 +8,9 @@
         <key>CFBundleExecutable</key>
         <string>{{.OutputFilename}}</string>
         <key>CFBundleIdentifier</key>
-        <string>com.wails.{{safeBundleID .Name}}</string>
+        <string>io.github.muhammedaslan34.dsync</string>
+        <key>NSLocalNetworkUsageDescription</key>
+        <string>dsync finds your other computers on this network and sends them text and files.</string>
         <key>CFBundleVersion</key>
         <string>{{.Info.ProductVersion}}</string>
         <key>CFBundleGetInfoString</key>

@@ -189,6 +189,9 @@ func TestInstallCommand(t *testing.T) {
 		{"linux", []string{"flatpak"}, "sunshine", "flatpak install --user --noninteractive flathub dev.lizardbyte.app.Sunshine"},
 		{"linux", nil, "moonlight", ""},
 		{"linux", []string{"pacman", "pkexec"}, "photoshop", ""},
+		{"darwin", []string{"brew"}, "moonlight", "brew install --cask moonlight"},
+		{"darwin", nil, "moonlight", ""},
+		{"darwin", []string{"brew"}, "sunshine", ""},
 	} {
 		runtimeOS = c.os
 		clear(tools)

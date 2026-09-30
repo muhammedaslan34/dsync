@@ -154,6 +154,7 @@ func TestAssetNames(t *testing.T) {
 		KindInstaller: "dsync-setup-1.2.3-windows-amd64.exe",
 		KindPacman:    "dsync-1.2.3-1-x86_64.pkg.tar.zst",
 		KindLocal:     "dsync-1.2.3-linux-x86_64.tar.gz",
+		KindMacApp:    "dsync-1.2.3-macos-universal.dmg",
 		KindManual:    "",
 	} {
 		if got := AssetName(kind, "1.2.3"); got != want {

@@ -51,6 +51,14 @@ func FindMoonlight() (Moonlight, bool) {
 	if runtimeOS == "linux" && flatpakInstalled("com.moonlight_stream.Moonlight") {
 		return Moonlight{cmd: []string{"flatpak", "run", "com.moonlight_stream.Moonlight"}}, true
 	}
+	if runtimeOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		for _, dir := range []string{"/Applications", filepath.Join(home, "Applications")} {
+			if p := filepath.Join(dir, "Moonlight.app", "Contents", "MacOS", "Moonlight"); fileExists(p) {
+				return Moonlight{cmd: []string{p}}, true
+			}
+		}
+	}
 	if runtimeOS == "windows" {
 		for _, dir := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)")} {
 			p := filepath.Join(dir, "Moonlight Game Streaming", "Moonlight.exe")
@@ -305,6 +313,10 @@ func InstallHint(program string) string {
 		return "Install Moonlight: winget install MoonlightGameStreamingProject.Moonlight, or download it from moonlight-stream.org"
 	case "sunshine/linux":
 		return "Install Sunshine: sudo pacman -S sunshine (Arch), or flatpak install flathub dev.lizardbyte.app.Sunshine, then open it once to set a username and password"
+	case "moonlight/darwin":
+		return "Install Moonlight: brew install --cask moonlight, or download it from moonlight-stream.org"
+	case "sunshine/darwin":
+		return "Sunshine's macOS support is experimental; see app.lizardbyte.dev"
 	case "sunshine/windows":
 		return "Install Sunshine: winget install LizardByte.Sunshine, or download it from app.lizardbyte.dev, then open https://localhost:47990 once to set a username and password"
 	}

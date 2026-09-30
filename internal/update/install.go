@@ -16,6 +16,7 @@ const (
 	KindInstaller = "installer" // the Windows setup
 	KindPacman    = "pacman"    // the Arch package
 	KindLocal     = "local"     // install.sh from the Linux tarball
+	KindMacApp    = "macapp"    // dsync.app from the macOS disk image
 	KindManual    = "manual"    // anything else, e.g. a development build
 )
 
@@ -28,6 +29,8 @@ func AssetName(kind, version string) string {
 		return fmt.Sprintf("dsync-%s-1-x86_64.pkg.tar.zst", version)
 	case KindLocal:
 		return fmt.Sprintf("dsync-%s-linux-x86_64.tar.gz", version)
+	case KindMacApp:
+		return fmt.Sprintf("dsync-%s-macos-universal.dmg", version)
 	}
 	return ""
 }
