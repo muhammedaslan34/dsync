@@ -1,10 +1,32 @@
 # dsync
 
-Send text (and soon files) between your Windows PC and Linux laptop.
+Send text, files and whole folders of any size between your computers and your phone,
+share the clipboard, and control another computer's screen. Windows, macOS, Linux, Android
+and iPhone, straight across your own network and encrypted end to end.
+
+**Website and downloads: https://muhammedaslan34.github.io/dsync-site/**
+(source: [dsync-site](https://github.com/muhammedaslan34/dsync-site))
+
+![dsync on Linux, talking with a Windows PC](docs/screenshots/desktop-chat.png)
+
+## Screenshots
+
+| Remote control | Connect a phone |
+|---|---|
+| ![Remote control options](docs/screenshots/desktop-control.png) | ![QR code to connect a phone](docs/screenshots/desktop-phone.png) |
+
+| Phone: computers | Phone: conversation | Phone: connect | Settings |
+|---|---|---|---|
+| ![Paired computers](docs/screenshots/phone-computers.png) | ![A conversation](docs/screenshots/phone-chat.png) | ![Connect a computer](docs/screenshots/phone-scan.png) | ![Settings](docs/screenshots/desktop-settings.png) |
+
+![Dark mode](docs/screenshots/desktop-dark.png)
+
+Screenshots use demo data.
 
 ## Install
 
-Download the file for your system from `dist/release` (see *Packaging* below):
+Download the file for your system from the [latest release](https://github.com/muhammedaslan34/dsync/releases/latest)
+(or build them yourself, see *Packaging* below):
 
 - **Windows:** run `dsync-setup-VERSION-windows-amd64.exe`. It installs dsync (the app
   and the `dsync.exe` command-line tool) to Program Files, adds Start menu and desktop
@@ -28,7 +50,13 @@ Intel Macs), open it and drag **dsync** into Applications. dsync isn't signed wi
 Developer ID, so the first time macOS says it can't be opened: right-click dsync → **Open**
 → **Open**. Allow it on the local network when macOS asks. On macOS there's no menu bar icon
 yet, so closing the window quits dsync. The disk image is built by
-`.github/workflows/macos.yml` on GitHub's Macs whenever a release is published.
+`.github/workflows/release.yml` on GitHub's Macs whenever a release is published.
+
+## Phone app
+
+`dsync-VERSION-android.apk` installs on Android; `dsync-VERSION-ios-unsigned.ipa` installs on
+iPhone with AltStore or Sideloadly. Then open dsync on a computer, *Settings → Connect a
+phone*, and scan the QR code with the app. See [`mobile/README.md`](mobile/README.md).
 
 ## Updates
 
