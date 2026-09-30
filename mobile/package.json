@@ -5,6 +5,7 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "expo": "~57.0.26",
+    "expo-application": "~57.0.3",
     "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.6",
     "expo-clipboard": "~57.0.2",
@@ -15,14 +16,17 @@
     "expo-font": "~57.0.4",
     "expo-image-picker": "~57.0.20",
     "expo-localization": "~57.0.2",
+    "expo-network": "~57.0.2",
     "expo-secure-store": "~57.0.4",
     "expo-sharing": "~57.0.22",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.4",
+    "qrcode-generator": "^2.0.4",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
+    "react-native-tcp-socket": "^6.4.3",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {

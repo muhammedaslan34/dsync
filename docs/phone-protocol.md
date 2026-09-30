@@ -83,8 +83,9 @@ Body `{"text": "..."}` (at most 1 MB). Response `{"message": <message>}`.
 
 ### Sending a file to the computer
 
-1. `POST /phone/v1/upload/start` body `{"name": "photo.jpg", "size": 123456}` →
-   `{"uploadId": "<id>", "chunkSize": 524288}`.
+1. `POST /phone/v1/upload/start` body `{"name": "photo.jpg", "size": 123456, "transferId": "<hex>"}` →
+   `{"uploadId": "<id>", "chunkSize": 524288, "offset": <bytes the computer already has>}`.
+   `transferId` is optional (see *Resuming* below); without it `offset` is always 0.
 2. `POST /phone/v1/upload/chunk` body `{"uploadId": "...", "offset": <bytes>, "data": "<base64>"}`
    → `{"received": <total bytes so far>}`. Chunks go in order; `offset` must equal the bytes
    received so far (`400` otherwise). At most `chunkSize` bytes per chunk.
@@ -95,11 +96,32 @@ Integrity comes from the secretbox authentication of each chunk and the offset/s
 The file lands in the computer's received-files folder and shows in its conversation with
 the phone.
 
+#### Resuming an upload
+
+A phone that sends `transferId` (16 to 64 hex characters, random, chosen by the phone and
+kept with the file) can continue an interrupted upload, even after it was closed or the
+computer restarted:
+
+- The computer keeps the data in a `.part` file in its received-files folder, named after
+  the phone and the transfer id. It isn't deleted when the phone goes quiet (only after
+  7 days unused).
+- Calling `upload/start` again with the same `transferId` and `size` returns the same
+  `uploadId` and, in `offset`, how many bytes the computer already has. The phone sends
+  chunks from there. The conversation keeps a single message for the file, back to
+  `active` while it continues.
+- A different `size` for the same `transferId` starts the file again from 0.
+- If a chunk fails with `400` (for example `expected offset …`), the phone calls
+  `upload/start` again to learn the right offset.
+
+Phones without `transferId` (app 1.0.11 and older) work as before: nothing is kept after
+an interruption.
+
 ### `POST /phone/v1/download`
 
 Body `{"messageId": 42, "offset": <bytes>, "length": <bytes, at most 1048576>}` →
 `{"data": "<base64>", "size": <whole file size>, "eof": true|false}`.
-Only for file messages the computer sent to this phone.
+Only for file messages the computer sent to this phone. The phone resumes an interrupted
+download by asking from the size of the part it already saved.
 
 ### `POST /phone/v1/unpair`
 

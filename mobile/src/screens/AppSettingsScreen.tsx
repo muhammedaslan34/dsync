@@ -1,16 +1,18 @@
-// The app's own settings: for now, the language.
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+// The app's own settings: language and updates.
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Nav } from '../../App';
 import { LANGS, LANG_NAMES, type LangSetting, setLanguage, useDirection, useI18n } from '../i18n';
 import { useTheme } from '../theme';
-import { BackButton, Card, Header, Icon } from '../components/ui';
+import { BackButton, Button, Card, Header, Icon } from '../components/ui';
+import { appVersion, checkForUpdate, installUpdate, useUpdate } from '../update';
 
 export default function AppSettingsScreen({ nav }: { nav: Nav }) {
   const t = useTheme();
   const i18n = useI18n();
   const dir = useDirection();
   const insets = useSafeAreaInsets();
+  const update = useUpdate();
 
   const options: { value: LangSetting; title: string; sub?: string }[] = [
     { value: 'system', title: i18n.t('app.system'), sub: LANG_NAMES[i18n.systemLang] },
@@ -48,6 +50,40 @@ export default function AppSettingsScreen({ nav }: { nav: Nav }) {
               </Pressable>
             );
           })}
+        </Card>
+
+        <Text style={[s.label, { color: t.muted, textAlign: dir.start, marginTop: 16 }, dir.isRTL && s.labelArabic]}>{i18n.t('app.updates')}</Text>
+        <Card t={t} style={{ gap: 12 }}>
+          <Text style={[s.title, { color: t.text, textAlign: dir.start }]}>{i18n.t('app.version', { version: appVersion() })}</Text>
+          {update.kind === 'current' ? (
+            <Text style={[s.sub, { color: t.ok, textAlign: dir.start }]}>{i18n.t('app.upToDate')}</Text>
+          ) : null}
+          {update.kind === 'error' && update.what === 'check' ? (
+            <Text style={[s.sub, { color: t.danger, textAlign: dir.start }]}>{i18n.t('app.checkFailed')}</Text>
+          ) : null}
+          {update.kind === 'available' || (update.kind === 'error' && update.release) ? (
+            <>
+              <Text style={[s.title, { color: t.accent, fontWeight: '600', textAlign: dir.start }]}>
+                {i18n.t('app.available', { version: (update.kind === 'available' ? update.release : update.release!).version })}
+              </Text>
+              <Button
+                title={Platform.OS === 'android' ? i18n.t('app.installAndroid') : i18n.t('app.openPage')}
+                icon="download-outline"
+                onPress={() => void installUpdate(update.kind === 'available' ? update.release : update.release!)}
+              />
+              <Text style={[s.sub, { color: t.muted, textAlign: dir.start }]}>
+                {Platform.OS === 'android' ? i18n.t('app.installHintAndroid') : i18n.t('app.installHintIos')}
+              </Text>
+            </>
+          ) : (
+            <Button
+              title={update.kind === 'checking' ? i18n.t('app.checking') : i18n.t('app.check')}
+              kind="secondary"
+              icon="refresh"
+              busy={update.kind === 'checking'}
+              onPress={() => void checkForUpdate()}
+            />
+          )}
         </Card>
       </ScrollView>
     </View>

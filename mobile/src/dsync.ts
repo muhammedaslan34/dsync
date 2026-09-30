@@ -16,6 +16,10 @@ export interface FileMeta {
   size: number;
   status: 'active' | 'done' | 'failed' | 'canceled' | string;
   error?: string;
+  /** Phone-to-phone, on the phone that shows the code: the file on this phone. */
+  uri?: string;
+  /** Bytes received so far, while it's arriving (phone-to-phone). */
+  received?: number;
 }
 
 export interface Message {
@@ -26,7 +30,12 @@ export interface Message {
   file?: FileMeta;
 }
 
-/** A paired computer, as stored on the phone. */
+/**
+ * A paired computer, as stored on the phone. Another phone is stored the same
+ * way: the phone that scanned the code talks to the one that showed it just as
+ * it talks to a computer; on the phone that showed the code the other phone is
+ * `hosted` (it has no address: it's the one that connects, see host.ts).
+ */
 export interface Computer {
   id: string;
   name: string;
@@ -40,6 +49,13 @@ export interface Computer {
   address: string;
   port: number;
   pairedAt: number;
+  /** A phone that paired with this one by scanning its code (see host.ts). */
+  hosted?: boolean;
+}
+
+/** Whether a device is a phone (by the os it reported). */
+export function isPhoneOS(os: string): boolean {
+  return os === 'android' || os === 'ios';
 }
 
 export interface PairingCode {
@@ -323,33 +339,59 @@ export class PhoneClient {
 
   /**
    * Sends a local file (file:// URI) with upload/start, upload/chunk, upload/finish.
+   * With a transferId the computer keeps what arrived, and a later call with
+   * the same id continues from there (computers before 1.0.12 start over).
    * onProgress gets bytes sent so far.
    */
   async upload(
-    file: { uri: string; name: string },
+    file: { uri: string; name: string; transferId?: string },
     onProgress: (sent: number, size: number) => void,
     isCanceled: () => boolean = () => false,
   ): Promise<Message> {
     const f = new File(file.uri);
+    if (!f.exists) throw new AppError('errors.fileGone', 'The file is no longer on the phone');
     const size = f.size;
     if (typeof size !== 'number' || size < 0) throw new AppError('errors.cantRead', 'Could not read the file');
-    const start = await this.call<{ uploadId: string; chunkSize: number }>('upload/start', { name: file.name, size });
-    const chunkSize = Math.max(1, Math.floor(start.chunkSize || 512 * 1024));
-    onProgress(0, size);
-    let offset = 0;
-    if (size > 0) {
+    const begin = async () => {
+      const r = await this.call<{ uploadId: string; chunkSize: number; offset?: number }>('upload/start', {
+        name: file.name,
+        size,
+        ...(file.transferId ? { transferId: file.transferId } : {}),
+      });
+      const off = typeof r.offset === 'number' && r.offset > 0 && r.offset <= size ? r.offset : 0;
+      return { id: r.uploadId, chunk: Math.max(1, Math.floor(r.chunkSize || 512 * 1024)), offset: off };
+    };
+    let start = await begin();
+    let offset = start.offset;
+    onProgress(offset, size);
+    if (offset < size) {
       const h = f.open(FileMode.ReadOnly);
+      let resyncs = 0;
       try {
         while (offset < size) {
           if (isCanceled()) throw new AppError('errors.canceled', 'Canceled');
           h.offset = offset;
-          const bytes = h.readBytes(Math.min(chunkSize, size - offset));
+          const bytes = h.readBytes(Math.min(start.chunk, size - offset));
           if (bytes.length === 0) throw new AppError('errors.endedEarly', 'The file ended early');
-          const r = await this.call<{ received: number }>(
-            'upload/chunk',
-            { uploadId: start.uploadId, offset, data: toBase64(bytes) },
-            60000,
-          );
+          let r: { received: number };
+          try {
+            r = await this.call<{ received: number }>(
+              'upload/chunk',
+              { uploadId: start.id, offset, data: toBase64(bytes) },
+              60000,
+            );
+          } catch (e) {
+            // The computer has a different amount (a chunk got lost, or it
+            // restarted): ask it where to continue.
+            if (file.transferId && resyncs < 3 && (isDsyncError(e, 'badRequest') || isDsyncError(e, 'notFound'))) {
+              resyncs++;
+              start = await begin();
+              offset = start.offset;
+              onProgress(offset, size);
+              continue;
+            }
+            throw e;
+          }
           if (r.received !== offset + bytes.length) throw new AppError('errors.lostPart', 'The computer lost part of the file');
           offset = r.received;
           onProgress(offset, size);
@@ -358,26 +400,39 @@ export class PhoneClient {
         h.close();
       }
     }
-    const done = await this.call<{ message: Message }>('upload/finish', { uploadId: start.uploadId }, 30000);
+    const done = await this.call<{ message: Message }>('upload/finish', { uploadId: start.id }, 30000);
     return done.message;
   }
 
   /**
-   * Downloads a file message from the computer into dest (overwritten), in
-   * chunks of at most 1 MB. onProgress gets bytes received so far.
+   * Downloads a file message from the computer into dest, in chunks of at
+   * most 1 MB. If dest already holds the start of the file (an earlier,
+   * interrupted download), it continues from there. onProgress gets bytes
+   * received so far.
    */
-  async download(messageId: number, dest: File, onProgress: (got: number, size: number) => void): Promise<void> {
-    if (dest.exists) dest.delete();
-    dest.create({ intermediates: true });
-    const h = dest.open(FileMode.WriteOnly);
+  async download(messageId: number, dest: File, onProgress: (got: number, size: number) => void, expectedSize?: number): Promise<void> {
     let offset = 0;
+    if (dest.exists) {
+      const have = dest.size ?? 0;
+      if (expectedSize !== undefined && have > 0 && have <= expectedSize) offset = have;
+      else dest.delete();
+    }
+    if (!dest.exists) dest.create({ intermediates: true });
+    if (expectedSize !== undefined && offset === expectedSize && offset > 0) {
+      onProgress(offset, offset);
+      return;
+    }
+    const h = dest.open(FileMode.ReadWrite);
     try {
+      h.offset = offset;
+      onProgress(offset, expectedSize ?? 0);
       for (;;) {
         const r = await this.call<{ data: string; size: number; eof: boolean }>(
           'download',
           { messageId, offset, length: DOWNLOAD_CHUNK },
           60000,
         );
+        if (offset > r.size) throw new AppError('errors.stalled', 'The file on the computer changed');
         const bytes = fromBase64(r.data || '');
         if (bytes.length > 0) h.writeBytes(bytes);
         offset += bytes.length;
@@ -385,13 +440,9 @@ export class PhoneClient {
         if (r.eof || offset >= r.size) break;
         if (bytes.length === 0) throw new AppError('errors.stalled', 'The download stalled');
       }
-    } catch (e) {
+    } finally {
+      // What arrived stays in dest, so the next try continues from it.
       h.close();
-      try {
-        dest.delete();
-      } catch {}
-      throw e;
     }
-    h.close();
   }
 }

@@ -1,10 +1,11 @@
 import './src/random';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, BackHandler, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useLocales } from 'expo-localization';
 import { loadLanguage, refreshSystemLanguage } from './src/i18n';
+import { startBackgroundTransfers } from './src/background';
 import { loadComputers, useStore } from './src/store';
 import { useTheme } from './src/theme';
 import ComputersScreen from './src/screens/ComputersScreen';
@@ -12,13 +13,17 @@ import ScanScreen from './src/screens/ScanScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import AppSettingsScreen from './src/screens/AppSettingsScreen';
+import HostPairScreen from './src/screens/HostPairScreen';
+import { startHost } from './src/host';
+import { checkForUpdateDaily } from './src/update';
 
 export type Route =
   | { name: 'list' }
   | { name: 'scan' }
   | { name: 'chat'; cid: string }
   | { name: 'settings'; cid: string }
-  | { name: 'app' };
+  | { name: 'app' }
+  | { name: 'hostPair' };
 
 export type Nav = {
   go: (r: Route) => void;
@@ -45,7 +50,9 @@ export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'list' });
 
   useEffect(() => {
-    void loadComputers();
+    void loadComputers().then(() => startHost());
+    startBackgroundTransfers();
+    void checkForUpdateDaily();
     void loadLanguage().finally(() => setLangReady(true));
   }, []);
 
@@ -67,7 +74,7 @@ export default function App() {
     return () => sub.remove();
   }, [route, back]);
 
-  const nav: Nav = { go: setRoute, back };
+  const nav: Nav = useMemo(() => ({ go: setRoute, back }), [back]);
 
   let screen;
   if (!ready) {
@@ -80,6 +87,8 @@ export default function App() {
     screen = <ScanScreen nav={nav} />;
   } else if (route.name === 'chat') {
     screen = <ChatScreen key={route.cid} cid={route.cid} nav={nav} />;
+  } else if (route.name === 'hostPair') {
+    screen = <HostPairScreen nav={nav} />;
   } else if (route.name === 'app') {
     screen = <AppSettingsScreen nav={nav} />;
   } else if (route.name === 'settings') {

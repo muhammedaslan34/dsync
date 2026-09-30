@@ -1,7 +1,7 @@
 // Formatting helpers, matching the desktop app's (frontend/src/lib/format.js).
 import { getI18n } from './i18n';
 
-export const osLabel: Record<string, string> = { windows: 'Windows', linux: 'Linux', darwin: 'macOS' };
+export const osLabel: Record<string, string> = { windows: 'Windows', linux: 'Linux', darwin: 'macOS', android: 'Android', ios: 'iOS' };
 
 // ---------- numbers, sizes, dates in the chosen language ----------
 //

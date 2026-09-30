@@ -246,3 +246,98 @@ func TestPhoneSecurity(t *testing.T) {
 		t.Error("sending a folder to a phone should fail clearly")
 	}
 }
+
+func TestPhoneUploadResume(t *testing.T) {
+	n := newTestNode(t, "Laptop")
+	p, _ := pairFakePhone(t, n)
+	video := bytes.Repeat([]byte("0123456789abcdef"), 90_000) // 1.44 MB: three chunks
+	tid := "00112233445566778899aabbccddeeff"
+	type startReply struct {
+		UploadID  string
+		ChunkSize int
+		Offset    int64
+	}
+	start := func(size int) startReply {
+		t.Helper()
+		var r startReply
+		if code, msg := p.do("/phone/v1/upload/start", map[string]any{"name": "clip.mp4", "size": size, "transferId": tid}, &r); code != 200 {
+			t.Fatalf("upload start: %d %s", code, msg)
+		}
+		return r
+	}
+	chunk := func(id string, off int, end int) {
+		t.Helper()
+		data := base64.StdEncoding.EncodeToString(video[off:end])
+		if code, msg := p.do("/phone/v1/upload/chunk", map[string]any{"uploadId": id, "offset": off, "data": data}, nil); code != 200 {
+			t.Fatalf("chunk at %d: %d %s", off, code, msg)
+		}
+	}
+	fileMsgs := func() (out []Message) {
+		for _, m := range n.History() {
+			if m.PeerID == p.phoneID && m.File != nil {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+
+	s := start(len(video))
+	if s.Offset != 0 || s.UploadID == "" {
+		t.Fatalf("first start: %+v", s)
+	}
+	chunk(s.UploadID, 0, s.ChunkSize)
+
+	// The phone asks again (it was closed and reopened): same upload, continue after the first chunk.
+	s2 := start(len(video))
+	if s2.UploadID != s.UploadID || s2.Offset != int64(s.ChunkSize) {
+		t.Fatalf("restart while the upload is still open: %+v, want offset %d", s2, s.ChunkSize)
+	}
+	chunk(s2.UploadID, int(s2.Offset), 2*s.ChunkSize)
+
+	// The computer forgets the open upload (idle, or it restarted): the .part file stays.
+	n.phones.mu.Lock()
+	for _, u := range n.phones.uploads {
+		u.touched = u.touched.Add(-2 * phoneUploadIdle)
+	}
+	n.phones.mu.Unlock()
+	n.dropIdleUploads()
+	if ms := fileMsgs(); len(ms) != 1 || ms[0].File.Status != StatusFailed {
+		t.Fatalf("after going idle: %+v", ms)
+	}
+	parts, _ := filepath.Glob(filepath.Join(n.ReceiveDir(), partPrefix+"*"+partSuffix))
+	if len(parts) != 1 {
+		t.Fatalf("want the .part file kept, got %v", parts)
+	}
+
+	s3 := start(len(video))
+	if s3.Offset != int64(2*s.ChunkSize) {
+		t.Fatalf("resume from disk: offset %d, want %d", s3.Offset, 2*s.ChunkSize)
+	}
+	if ms := fileMsgs(); len(ms) != 1 || ms[0].File.Status != StatusActive {
+		t.Fatalf("resuming reuses the message: %+v", ms)
+	}
+	chunk(s3.UploadID, int(s3.Offset), len(video))
+	var fin struct{ Message PhoneMessage }
+	if code, msg := p.do("/phone/v1/upload/finish", map[string]any{"uploadId": s3.UploadID}, &fin); code != 200 {
+		t.Fatalf("finish: %d %s", code, msg)
+	}
+	if fin.Message.File == nil || fin.Message.File.Status != StatusDone {
+		t.Fatalf("finished: %+v", fin.Message)
+	}
+	if got, _ := os.ReadFile(filepath.Join(n.ReceiveDir(), "clip.mp4")); !bytes.Equal(got, video) {
+		t.Fatal("the resumed file differs")
+	}
+	if parts, _ := filepath.Glob(filepath.Join(n.ReceiveDir(), partPrefix+"*"+partSuffix)); len(parts) != 0 {
+		t.Errorf("leftover .part files: %v", parts)
+	}
+
+	// A transfer id must be hex.
+	if code, _ := p.do("/phone/v1/upload/start", map[string]any{"name": "x", "size": 1, "transferId": "nothex"}, nil); code != http.StatusBadRequest {
+		t.Errorf("bad transfer id: %d, want 400", code)
+	}
+	// Uploads without a transfer id (phone app 1.0.11) still work and start at 0.
+	var old startReply
+	if code, _ := p.do("/phone/v1/upload/start", map[string]any{"name": "old.txt", "size": 2}, &old); code != 200 || old.Offset != 0 {
+		t.Errorf("old-style start: %d %+v", code, old)
+	}
+}

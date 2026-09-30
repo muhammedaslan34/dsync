@@ -16,7 +16,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Nav } from '../../App';
-import { type Message, describeError } from '../dsync';
+import { type Message, describeError, isPhoneOS } from '../dsync';
 import { dayLabel, fileKind, fmtShort, fmtSize, fmtTime, sameDay, type FileKind } from '../format';
 import {
   EMPTY_THREAD,
@@ -94,7 +94,13 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
       prevTime = time;
       prevOut = fromPhone;
     };
-    for (const m of thread.messages) push(m.time, m.fromPhone, (first) => ({ type: 'msg', key: `m${m.id}`, m, first }));
+    // The other side lists a file as soon as its upload starts ("active"). While
+    // this phone is still sending it, the sending bubble below stands for it.
+    const sending = new Set(pending.filter((p) => p.kind === 'file').map((p) => `${p.name}\u0000${p.size}`));
+    const shown = thread.messages.filter(
+      (m) => !(m.fromPhone && m.file?.status === 'active' && sending.has(`${m.file.name}\u0000${m.file.size}`)),
+    );
+    for (const m of shown) push(m.time, m.fromPhone, (first) => ({ type: 'msg', key: `m${m.id}`, m, first }));
     for (const p of pending) push(p.time, true, (first) => ({ type: 'pending', key: p.key, p, first }));
     return out.reverse(); // the list is inverted: newest at the bottom
   }, [thread.messages, pending, tr]); // tr: day labels follow the language
@@ -119,7 +125,7 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
   if (thread.error) {
     switch (thread.error.kind) {
       case 'unauthorized':
-        banner = tr('chat.bannerUnauthorized');
+        banner = isPhoneOS(computer.os) ? tr('chat.bannerUnauthorizedPhone', { name: computer.name }) : tr('chat.bannerUnauthorized');
         break;
       case 'clock':
         banner = tr('chat.bannerClock');
@@ -128,7 +134,7 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
         banner = tr('chat.bannerBadReply');
         break;
       default:
-        banner = tr('chat.bannerUnreachable');
+        banner = isPhoneOS(computer.os) ? tr('chat.bannerUnreachablePhone', { name: computer.name }) : tr('chat.bannerUnreachable');
     }
   }
 
@@ -240,7 +246,7 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
             </View>
           </Pressable>
         }
-        right={<IconButton icon="settings-outline" label={tr('chat.computerSettings')} onPress={() => nav.go({ name: 'settings', cid })} />}
+        right={<IconButton icon="settings-outline" label={isPhoneOS(computer.os) ? tr('chat.phoneSettings') : tr('chat.computerSettings')} onPress={() => nav.go({ name: 'settings', cid })} />}
       />
       {showBanner ? (
         <View style={[s.banner, { flexDirection: dirRow, backgroundColor: t.dangerSoft }]}>
@@ -388,6 +394,8 @@ function FileBubble({ t, tr, dir, m, first, download, onSave }: BubbleProps & { 
   else if (out) state = tr('chat.sent');
   const canSave = !out && f.status === 'done';
   const busy = !!download?.busy;
+  // Arriving from a phone that scanned this phone's code.
+  const arriving = !out && f.status === 'active' && typeof f.received === 'number';
   return (
     <View style={[s.msg, msgSide(dir, out), first && s.first]}>
       <View style={[s.bubble, s.fileBubble, bubbleColors(t, out), first && firstCorner(dir, out)]}>
@@ -396,12 +404,17 @@ function FileBubble({ t, tr, dir, m, first, download, onSave }: BubbleProps & { 
           <View style={{ flex: 1, minWidth: 0 }}>
             <FileName name={f.name} dir={dir} color={out ? t.bubbleOutText : t.text} />
             <Text style={[s.fileSubText, { color: sub, textAlign: dir.start }]}>
-              {busy ? tr('chat.progress', { done: fmtSize(download!.got), total: fmtSize(f.size) }) : fmtSize(f.size)}
+              {busy
+                ? tr('chat.progress', { done: fmtSize(download!.got), total: fmtSize(f.size) })
+                : arriving
+                  ? tr('chat.progress', { done: fmtSize(f.received!), total: fmtSize(f.size) })
+                  : fmtSize(f.size)}
               {state ? ` · ${state}` : ''}
             </Text>
           </View>
         </View>
         {busy ? <Bar t={t} dir={dir} out={out} frac={f.size ? download!.got / f.size : 0} /> : null}
+        {arriving ? <Bar t={t} dir={dir} out={out} frac={f.size ? f.received! / f.size : 0} /> : null}
         {/* f.error comes from the computer, in its own words. */}
         {f.error ? <Text numberOfLines={2} style={[s.fileError, { color: out ? '#ffd0d0' : t.danger, textAlign: dir.start }]}>{f.error}</Text> : null}
         {download?.error != null && !busy ? (
