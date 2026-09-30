@@ -34,6 +34,8 @@ export function PickFiles(arg1:string):Promise<void>;
 
 export function ReceiveDir():Promise<string>;
 
+export function RetryTransfer(arg1:number):Promise<void>;
+
 export function RevealPath(arg1:string):Promise<void>;
 
 export function Scan():Promise<void>;

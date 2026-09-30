@@ -103,6 +103,9 @@ func (a *App) SendPaths(peerID string, paths []string) error {
 
 func (a *App) CancelTransfer(id int64) { a.node.CancelTransfer(id) }
 
+// RetryTransfer sends a failed outgoing file again, resuming if possible.
+func (a *App) RetryTransfer(id int64) error { return a.node.RetryTransfer(a.ctx, id) }
+
 func (a *App) ReceiveDir() string { return a.node.ReceiveDir() }
 
 // ChooseReceiveDir lets the user pick where received files are saved.

@@ -27,6 +27,7 @@ export namespace node {
 	    path: string;
 	    status: string;
 	    error?: string;
+	    transferId?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FileInfo(source);
@@ -39,6 +40,7 @@ export namespace node {
 	        this.path = source["path"];
 	        this.status = source["status"];
 	        this.error = source["error"];
+	        this.transferId = source["transferId"];
 	    }
 	}
 	export class Message {

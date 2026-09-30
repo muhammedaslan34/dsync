@@ -77,7 +77,7 @@ func cmdPair(cfg *config.Config, args []string) error {
 	addr := fs.String("addr", "", "pair directly with HOST[:PORT], skipping discovery")
 	fs.Parse(args)
 
-	cl, id, err := newClient()
+	cl, id, err := newClient(cfg)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func cmdText(cfg *config.Config, args []string) error {
 		return fmt.Errorf("message is larger than %d bytes; send it as a file instead", proto.MaxTextBytes)
 	}
 
-	cl, _, err := newClient()
+	cl, _, err := newClient(cfg)
 	if err != nil {
 		return err
 	}
@@ -171,12 +171,8 @@ func cmdText(cfg *config.Config, args []string) error {
 	return nil
 }
 
-func newClient() (*client.Client, *identity.Identity, error) {
-	dir, err := config.Dir()
-	if err != nil {
-		return nil, nil, err
-	}
-	id, err := identity.Load(dir)
+func newClient(cfg *config.Config) (*client.Client, *identity.Identity, error) {
+	id, err := identity.Load(cfg.Dir())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -268,7 +264,7 @@ func cmdSend(cfg *config.Config, args []string) error {
 		}
 	}
 
-	cl, _, err := newClient()
+	cl, _, err := newClient(cfg)
 	if err != nil {
 		return err
 	}
@@ -298,9 +294,12 @@ func sendOne(ctx context.Context, cfg *config.Config, cl *client.Client, t targe
 	}
 
 	base := filepath.Base(path)
-	start := time.Now()
-	var last time.Time
+	var start, last time.Time
+	var startDone int64 = -1
 	progress := func(done int64) {
+		if startDone < 0 {
+			startDone, start = done, time.Now()
+		}
 		if time.Since(last) < 200*time.Millisecond && done != st.Size() {
 			return
 		}
@@ -309,10 +308,18 @@ func sendOne(ctx context.Context, cfg *config.Config, cl *client.Client, t targe
 		if st.Size() > 0 {
 			pct = float64(done) * 100 / float64(st.Size())
 		}
-		rate := float64(done) / max(time.Since(start).Seconds(), 0.001)
+		rate := float64(done-startDone) / max(time.Since(start).Seconds(), 0.001)
 		fmt.Fprintf(os.Stderr, "\r%s  %5.1f%%  %s / %s  %s/s   ", base, pct, humanBytes(done), humanBytes(st.Size()), humanBytes(int64(rate)))
 	}
-	h := client.FileHeader{FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, Name: base, Size: st.Size()}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	h := client.FileHeader{
+		FromID: cfg.ID, FromName: cfg.Name, FromPort: cfg.Port, Name: base, Size: st.Size(),
+		// Same id each run, so running the command again resumes.
+		TransferID: client.TransferID(cfg.ID, abs, st.Size(), st.ModTime()),
+	}
 	err = cl.SendFile(ctx, t.addr, t.fp, h, f, progress)
 	fmt.Fprintln(os.Stderr)
 	return err

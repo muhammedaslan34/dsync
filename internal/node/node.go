@@ -77,9 +77,10 @@ type Node struct {
 	mu        sync.Mutex
 	peers     map[string]*Peer
 	history   []Message
-	transfers map[int64]context.CancelFunc
+	transfers map[int64]context.CancelCauseFunc
 	pending   map[string]*pendingPair       // incoming pair requests by request id
 	pairing   map[string]context.CancelFunc // outgoing pair requests by peer id
+	parts     map[string]*partClaim         // partial files being written, by path
 }
 
 // New loads (or creates) this device's identity and history.
@@ -87,20 +88,17 @@ func New(cfg *config.Config, emit func(event string, data any)) (*Node, error) {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
-	dir, err := config.Dir()
-	if err != nil {
-		return nil, err
-	}
-	id, err := identity.Load(dir)
+	id, err := identity.Load(cfg.Dir())
 	if err != nil {
 		return nil, err
 	}
 	n := &Node{
 		cfg: cfg, id: id, cl: client.New(id), emit: emit,
 		peers:     map[string]*Peer{},
-		transfers: map[int64]context.CancelFunc{},
+		transfers: map[int64]context.CancelCauseFunc{},
 		pending:   map[string]*pendingPair{},
 		pairing:   map[string]context.CancelFunc{},
+		parts:     map[string]*partClaim{},
 	}
 	n.loadHistory()
 	return n, nil
@@ -142,6 +140,7 @@ func (n *Node) Run(ctx context.Context) error {
 		}
 	}()
 	go n.scanLoop(ctx)
+	go n.cleanParts()
 
 	var runErr error
 	select {
@@ -381,20 +380,12 @@ func (n *Node) updateFile(id int64, change func(f *FileInfo)) {
 	}
 }
 
-func historyPath() (string, error) {
-	dir, err := config.Dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "history.json"), nil
+func (n *Node) historyPath() string {
+	return filepath.Join(n.cfg.Dir(), "history.json")
 }
 
 func (n *Node) loadHistory() {
-	path, err := historyPath()
-	if err != nil {
-		return
-	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(n.historyPath())
 	if err != nil {
 		return
 	}
@@ -410,12 +401,8 @@ func (n *Node) loadHistory() {
 }
 
 func (n *Node) saveHistoryLocked() {
-	path, err := historyPath()
-	if err != nil {
-		return
-	}
 	data, _ := json.Marshal(n.history)
-	os.WriteFile(path, data, 0o600)
+	os.WriteFile(n.historyPath(), data, 0o600)
 }
 
 // LocalAddrs lists this device's addresses, to show the user what to type

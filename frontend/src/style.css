@@ -777,3 +777,6 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+
+.retrying { display: flex; align-items: center; gap: 5px; margin-top: 3px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.msg.out .retrying { color: #fff; }

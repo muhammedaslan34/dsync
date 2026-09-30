@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte'
   import { fmtSize, fileKind } from './format.js'
 
-  let { m, progress, onCancel, onOpen, onReveal } = $props()
+  let { m, progress, onCancel, onOpen, onReveal, onRetry } = $props()
 
   let f = $derived(m.file)
   let kind = $derived(fileKind(f.name))
@@ -24,14 +24,18 @@
     {#if f.status === 'active'}
       <div class="bar"><div class="fill" class:indeterminate={!progress} style="width: {progress ? pct : 100}%"></div></div>
       <div class="file-sub">
-        {#if progress}
+        {#if f.error}
+          <span>{progress ? `${fmtSize(progress.done)} / ${fmtSize(f.size)}` : fmtSize(f.size)}</span>
+          <span>Paused</span>
+        {:else if progress}
           <span>{fmtSize(progress.done)} / {fmtSize(f.size)}</span>
-          <span>{fmtSize(progress.rate)}/s · {eta(progress)}</span>
+          <span>{progress.rate ? `${fmtSize(progress.rate)}/s · ${eta(progress)}` : 'Resuming…'}</span>
         {:else}
           <span>{fmtSize(f.size)}</span>
           <span>{m.incoming ? 'Starting…' : 'Waiting…'}</span>
         {/if}
       </div>
+      {#if f.error}<div class="retrying"><Icon name="refresh" size={12} /> {f.error}</div>{/if}
     {:else}
       <div class="file-sub">
         <span>{fmtSize(f.size)}</span>
@@ -54,5 +58,7 @@
   {:else if f.status === 'done' && f.path}
     <button class="pill" onclick={onOpen}><Icon name="open" size={13} /> Open</button>
     <button class="pill" onclick={onReveal}><Icon name="folder" size={13} /> Show in folder</button>
+  {:else if !m.incoming && (f.status === 'failed' || f.status === 'canceled')}
+    <button class="pill" onclick={onRetry}><Icon name="refresh" size={13} /> {f.status === 'failed' ? 'Retry' : 'Send again'}</button>
   {/if}
 </div>

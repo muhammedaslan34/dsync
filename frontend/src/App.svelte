@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte'
   import {
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
-    PickFiles, SendPaths, CancelTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
+    PickFiles, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
@@ -366,6 +366,7 @@
                     onCancel={() => CancelTransfer(m.id)}
                     onOpen={() => run(() => OpenPath(m.file.path))}
                     onReveal={() => run(() => RevealPath(m.file.path))}
+                    onRetry={() => run(() => RetryTransfer(m.id))}
                   />
                   <span class="stamp">{fmtTime(m.time)}</span>
                 </div>

@@ -44,8 +44,24 @@ const (
 	HeaderFromPort = "X-Dsync-From-Port"
 	HeaderFileName = "X-Dsync-File-Name" // URL query-escaped
 	HeaderFileSize = "X-Dsync-File-Size"
-	TrailerSHA256  = "X-Dsync-Sha256" // hex
+	TrailerSHA256  = "X-Dsync-Sha256" // hex, of the whole file
+	// A transfer id stays the same when an interrupted transfer is sent
+	// again, so the receiver can keep what it already has.
+	HeaderTransferID = "X-Dsync-Transfer-Id"
+	// HeaderOffset is where the body starts in the file (0 unless resuming).
+	HeaderOffset = "X-Dsync-Offset"
 )
+
+// OffsetRequest asks how much of a transfer the receiver already has
+// (POST /api/v1/file/offset).
+type OffsetRequest struct {
+	TransferID string `json:"transfer_id"`
+	Size       int64  `json:"size"`
+}
+
+type OffsetResponse struct {
+	Offset int64 `json:"offset"`
+}
 
 // PairRequest asks a device to trust the sender. The sender's key comes from
 // its TLS client certificate.

@@ -62,6 +62,10 @@ export function ReceiveDir() {
   return window['go']['main']['App']['ReceiveDir']();
 }
 
+export function RetryTransfer(arg1) {
+  return window['go']['main']['App']['RetryTransfer'](arg1);
+}
+
 export function RevealPath(arg1) {
   return window['go']['main']['App']['RevealPath'](arg1);
 }

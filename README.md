@@ -15,6 +15,7 @@ go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0   # installs to ~/go/b
 wails build                           # Linux app  -> build/bin/dsync-gui
 wails build -platform windows/amd64   # Windows app -> build/bin/dsync-gui.exe (built from Linux)
 wails dev                             # run with live reload while editing the UI
+go test ./internal/...                # tests (transfer resume, retries, cancel)
 ```
 
 The optional command-line tool (for scripts) builds with plain Go:
@@ -55,6 +56,12 @@ network for it (this works even when the firewall blocks discovery broadcasts, a
 TCP 47101 is open), or you can type its address. This computer's addresses are listed at
 the bottom of that window; click one to copy it.
 
+Interrupted transfers resume where they stopped: if the connection drops, the sender keeps
+retrying for a few minutes, and a failed file has a **Retry** button (or run the same
+`dsync send` again). The receiver keeps partial files as hidden `.dsync-*.part` files in
+the download folder until the transfer finishes; unused ones are deleted after a week.
+The checksum always covers the whole file, so a resumed file is verified the same way.
+
 Only one dsync (app or `dsync serve`) can run per computer, since both use the same ports.
 
 Command-line tool:
@@ -93,5 +100,5 @@ command line, use `dsync pair --to NAME`.)
 1. ✅ Discovery + text, desktop app
 2. ✅ File transfer (streaming, progress, checksum, cancel)
 3. ✅ Pairing + TLS 1.3
-4. Resume, clipboard sync, folders
+4. Resume (✅), clipboard sync, folders
 5. `dsync control` (launch Moonlight), tray GUI, Tailscale

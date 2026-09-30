@@ -26,6 +26,8 @@ type Config struct {
 	DownloadDir string `json:"download_dir,omitempty"`
 	// Trusted are the paired devices. Only they may send us data.
 	Trusted []TrustedPeer `json:"trusted,omitempty"`
+
+	dir string // where this config lives
 }
 
 // TrustedPeer is a paired device, identified by its key fingerprint.
@@ -93,14 +95,20 @@ func Dir() (string, error) {
 	return filepath.Join(d, "dsync"), nil
 }
 
+// Load reads the config from Dir, creating it on first run.
 func Load() (*Config, error) {
 	dir, err := Dir()
 	if err != nil {
 		return nil, err
 	}
+	return LoadFrom(dir)
+}
+
+// LoadFrom reads the config from dir, creating it on first run.
+func LoadFrom(dir string) (*Config, error) {
 	path := filepath.Join(dir, "config.json")
 
-	var c Config
+	c := Config{dir: dir}
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
@@ -137,14 +145,14 @@ func Load() (*Config, error) {
 	return &c, nil
 }
 
+// Dir is the folder this config was loaded from; the identity and history
+// live there too.
+func (c *Config) Dir() string { return c.dir }
+
 func (c *Config) Save() error {
-	dir, err := Dir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		return err
 	}
 	out, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(filepath.Join(dir, "config.json"), out, 0o600)
+	return os.WriteFile(filepath.Join(c.dir, "config.json"), out, 0o600)
 }
