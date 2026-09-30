@@ -5,9 +5,19 @@ All notable changes to dsync. Downloads for every version are on the
 
 ## Unreleased
 
+- **Phone to phone:** on one phone tap *Connect a phone* to show a QR code, and scan it
+  from the other phone. Both then send text, photos and files to each other, encrypted,
+  while both apps are open on the same Wi-Fi.
+- **Transfers continue where they stopped:** a file interrupted between a phone and a
+  computer (the app closed, Wi-Fi dropped) continues from where it stopped when the app
+  opens again, instead of from the start.
+- **Android keeps sending in the background,** with a "Sending … %" notification.
+- Phone app: a file being sent no longer shows up twice while it's sending.
 - Phone app: Android no longer asks for permissions dsync never uses (microphone,
   drawing over other apps, fingerprint), which makes Play Protect less likely to block
   the APK.
+- The phone app no longer runs in Expo Go; `mobile/README.md` explains building a
+  development copy.
 
 ## 1.0.11 — 2026-09-30
 
