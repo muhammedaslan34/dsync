@@ -277,6 +277,12 @@ type ControlOptions struct {
 	Resolution  string `json:"resolution"`
 	FPS         int    `json:"fps"`
 	DisplayMode string `json:"displayMode"`
+	// Quality sets the bitrate: standard, high (default) or best.
+	Quality   string `json:"quality"`
+	SharpText bool   `json:"sharpText"` // full color detail (YUV 4:4:4)
+	// Zoom means Resolution is a "bigger" size: the controlled PC switches
+	// to it (Windows), so everything looks larger.
+	Zoom bool `json:"zoom"`
 }
 
 // ControlInfo tells the options dialog what the device offers.
@@ -414,8 +420,13 @@ func (n *Node) runControl(ctx context.Context, peer Peer, fp string, opts Contro
 
 	// A smaller stream only makes things bigger if the host switches to
 	// it, which Sunshine does on Windows.
-	stream := control.StreamOptions{Resolution: opts.Resolution, FPS: opts.FPS, DisplayMode: opts.DisplayMode}
-	match := opts.Resolution != "" && strings.EqualFold(peer.OS, "windows")
+	stream := control.StreamOptions{
+		Resolution: opts.Resolution, FPS: opts.FPS, DisplayMode: opts.DisplayMode,
+		Bitrate: control.Bitrate(opts.Resolution, opts.FPS, opts.Quality), YUV444: opts.SharpText,
+	}
+	// Only a "bigger" size switches the PC's resolution; full size streams
+	// at the screen's own resolution and changes nothing there.
+	match := opts.Zoom && opts.Resolution != "" && strings.EqualFold(peer.OS, "windows")
 	screen := opts.Screen
 	if screen == "" {
 		screen = st.Screen // keep the current choice unless asked

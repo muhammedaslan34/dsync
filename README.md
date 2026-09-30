@@ -154,7 +154,10 @@ Sunshine. The login is stored in dsync's settings file, readable only by your us
 Before it starts, the control window lets you pick **which screen** to control (the other
 computer's monitors, when it has several), the **size** (smaller sizes make everything look
 bigger: a Windows PC switches its resolution to match while you control it, and back
-afterwards), fullscreen or window, and the frame rate. Choosing the screen and the
+afterwards), fullscreen or window, the frame rate, and the **quality** (bitrate: *High* by default, *Best* for the sharpest
+text on a fast network) with an optional **Sharpest text** switch (full 4:4:4 color, for
+recent graphics on both sides). *Full size* streams at your screen's real resolution.
+Choosing the screen and the
 bigger sizes on Windows use the Sunshine login saved in dsync on that PC. While
 controlling, Ctrl+Alt+Shift+Q stops and Ctrl+Alt+Shift+X switches fullscreen; to zoom into
 one spot, use the controlled computer's magnifier (Win and + on Windows).

@@ -80,6 +80,25 @@
             </p>
           </div>
 
+          <div class="opt">
+            <span class="opt-label">Quality</span>
+            <div class="segmented wide">
+              {#each [['standard', 'Standard'], ['high', 'High'], ['best', 'Best']] as [value, label] (value)}
+                <button class:on={options.quality === value} onclick={() => (options.quality = value)}>{label}</button>
+              {/each}
+            </div>
+            <p class="muted small">
+              {options.quality === 'best' ? 'Sharpest picture; needs a fast network (wired or strong Wi-Fi).' : options.quality === 'standard' ? 'Lightest on the network; text can look soft.' : 'Sharp text on a home network.'}
+            </p>
+            <label class="switch-row">
+              <span class="switch-text">
+                <span>Sharpest text</span>
+                <span class="muted small">Keeps full color detail so small text stays crisp. Needs recent graphics on both computers; turn it off if the picture stutters or stays black.</span>
+              </span>
+              <input type="checkbox" class="switch" role="switch" bind:checked={options.sharpText} />
+            </label>
+          </div>
+
           <div class="opt-row">
             <div class="opt">
               <span class="opt-label">Window</span>

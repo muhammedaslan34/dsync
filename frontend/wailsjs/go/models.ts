@@ -149,6 +149,9 @@ export namespace node {
 	    resolution: string;
 	    fps: number;
 	    displayMode: string;
+	    quality: string;
+	    sharpText: boolean;
+	    zoom: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ControlOptions(source);
@@ -160,6 +163,9 @@ export namespace node {
 	        this.resolution = source["resolution"];
 	        this.fps = source["fps"];
 	        this.displayMode = source["displayMode"];
+	        this.quality = source["quality"];
+	        this.sharpText = source["sharpText"];
+	        this.zoom = source["zoom"];
 	    }
 	}
 	export class FileInfo {

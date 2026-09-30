@@ -362,7 +362,7 @@
   // Remote control starts with an options step; choices are remembered
   // per device.
   function loadControlOptions(id) {
-    const defaults = { screen: '', resolution: '', displayMode: 'fullscreen', fps: 60 }
+    const defaults = { screen: '', resolution: '', displayMode: 'fullscreen', fps: 60, quality: 'high', sharpText: false }
     try {
       return { ...defaults, ...JSON.parse(localStorage.getItem('control:' + id) || '{}') }
     } catch {
@@ -376,12 +376,26 @@
     if (control?.peer.id === d.id) control.info = info
   }
 
+  // fullSize is the stream size for "Full size": this screen's real
+  // resolution, or the other computer's screen if that's smaller, so
+  // nothing gets squeezed or stretched more than needed.
+  function fullSize(info, screenId) {
+    const dpr = window.devicePixelRatio || 1
+    const mine = [Math.round(screen.width * dpr), Math.round(screen.height * dpr)]
+    const ds = info?.displays ?? []
+    const d = ds.find((x) => x.id === (screenId || info?.screen)) ?? ds.find((x) => x.primary)
+    if (d?.width && d.width * d.height < mine[0] * mine[1]) return `${d.width}x${d.height}`
+    return `${mine[0]}x${mine[1]}`
+  }
+
   async function beginControl(opts) {
     const d = control.peer
     try { localStorage.setItem('control:' + d.id, JSON.stringify(opts)) } catch {}
     control.state = { step: 'checking' }
+    const zoom = !!opts.resolution
+    const resolution = zoom ? opts.resolution : fullSize(control.info, opts.screen)
     try {
-      await StartControl(d.id, { ...opts })
+      await StartControl(d.id, { ...opts, resolution, zoom })
     } catch (e) {
       control.state = { step: 'error', message: String(e) }
     }

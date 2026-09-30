@@ -321,9 +321,31 @@ func TestStreamOptionArgs(t *testing.T) {
 		{StreamOptions{}, ""},
 		{StreamOptions{Resolution: "1280x720", FPS: 60, DisplayMode: "fullscreen", MatchHost: true}, "--resolution 1280x720 --fps 60 --display-mode fullscreen --game-optimization"},
 		{StreamOptions{DisplayMode: "evil; rm -rf"}, ""},
+		{StreamOptions{Resolution: "1920x1080", Bitrate: 40000, YUV444: true}, "--resolution 1920x1080 --bitrate 40000 --yuv444"},
 	} {
 		if got := strings.Join(c.o.args(), " "); got != c.want {
 			t.Errorf("%+v: %q", c.o, got)
+		}
+	}
+}
+
+func TestBitrate(t *testing.T) {
+	for _, c := range []struct {
+		res     string
+		fps     int
+		quality string
+		want    int
+	}{
+		{"1920x1080", 60, "standard", 20000},
+		{"1920x1080", 60, "high", 40000},
+		{"1920x1080", 60, "best", 60000},
+		{"1280x720", 60, "high", 17777},
+		{"3840x2160", 120, "best", 150000}, // capped
+		{"", 0, "", 40000},                 // defaults: 1080p, 60 fps, high
+		{"320x200", 30, "standard", 5000},  // floor
+	} {
+		if got := Bitrate(c.res, c.fps, c.quality); got != c.want {
+			t.Errorf("Bitrate(%q, %d, %q) = %d, want %d", c.res, c.fps, c.quality, got, c.want)
 		}
 	}
 }

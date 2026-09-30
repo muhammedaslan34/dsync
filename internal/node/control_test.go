@@ -339,7 +339,7 @@ func TestControlChoosesScreenAndZoom(t *testing.T) {
 		t.Fatalf("control info: %+v", info)
 	}
 
-	opts := ControlOptions{Screen: "{a1}", Resolution: "1280x720", FPS: 60, DisplayMode: "fullscreen"}
+	opts := ControlOptions{Screen: "{a1}", Resolution: "1280x720", FPS: 60, DisplayMode: "fullscreen", Zoom: true, Quality: "high"}
 	a.StartControl(t.Context(), b.cfg.ID, opts)
 	if s := la.waitControl(t); s.Step != "done" {
 		t.Fatalf("ended with %+v", s)
@@ -353,7 +353,7 @@ func TestControlChoosesScreenAndZoom(t *testing.T) {
 	if saves != 1 || restarts != 1 {
 		t.Errorf("saves=%d restarts=%d, want 1 and 1", saves, restarts)
 	}
-	if want := "stream 127.0.0.1 Desktop --resolution 1280x720 --fps 60 --display-mode fullscreen --game-optimization"; !strings.Contains(f.calls(), want) {
+	if want := "stream 127.0.0.1 Desktop --resolution 1280x720 --fps 60 --bitrate 17777 --display-mode fullscreen --game-optimization"; !strings.Contains(f.calls(), want) {
 		t.Errorf("moonlight calls:\n%s\nwant %q", f.calls(), want)
 	}
 

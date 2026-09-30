@@ -125,6 +125,10 @@ type StreamOptions struct {
 	Resolution  string `json:"resolution"`  // "1920x1080", "" = Moonlight's setting
 	FPS         int    `json:"fps"`         // 0 = Moonlight's setting
 	DisplayMode string `json:"displayMode"` // fullscreen, windowed, borderless, "" = Moonlight's setting
+	Bitrate     int    `json:"bitrate"`     // kbit/s, 0 = Moonlight's setting
+	// YUV444 keeps full color detail, which keeps text sharp; needs a
+	// recent GPU on both sides.
+	YUV444 bool `json:"yuv444"`
 	// MatchHost asks Sunshine to switch the host's screen to the stream's
 	// resolution (needs Moonlight's "optimize game settings").
 	MatchHost bool `json:"-"`
@@ -138,9 +142,15 @@ func (o StreamOptions) args() []string {
 	if o.FPS > 0 {
 		a = append(a, "--fps", fmt.Sprint(o.FPS))
 	}
+	if o.Bitrate > 0 {
+		a = append(a, "--bitrate", fmt.Sprint(o.Bitrate))
+	}
 	switch o.DisplayMode {
 	case "fullscreen", "windowed", "borderless":
 		a = append(a, "--display-mode", o.DisplayMode)
+	}
+	if o.YUV444 {
+		a = append(a, "--yuv444")
 	}
 	if o.MatchHost {
 		a = append(a, "--game-optimization")
@@ -150,6 +160,27 @@ func (o StreamOptions) args() []string {
 
 // Stream opens a Moonlight window controlling host's desktop. It returns
 // once Moonlight has started; the stream runs on its own.
+// Bitrate returns the stream bitrate in kbit/s for a resolution and frame
+// rate: Moonlight's own default (about 20 Mbit/s for 1080p at 60 fps)
+// times the quality's factor. Desktops need more than games for sharp
+// text, and a home network has plenty.
+func Bitrate(resolution string, fps int, quality string) int {
+	var w, h int
+	if _, err := fmt.Sscanf(resolution, "%dx%d", &w, &h); err != nil || w <= 0 || h <= 0 {
+		w, h = 1920, 1080
+	}
+	if fps <= 0 {
+		fps = 60
+	}
+	base := float64(w*h) / (1920 * 1080) * float64(fps) / 60 * 20000
+	factor := map[string]float64{"standard": 1, "high": 2, "best": 3}[quality]
+	if factor == 0 {
+		factor = 2
+	}
+	kbps := int(base * factor)
+	return max(5000, min(kbps, 150000))
+}
+
 func (m Moonlight) Stream(host string, o StreamOptions) error {
 	cmd := m.command(nil, append([]string{"stream", host, DesktopApp}, o.args()...)...)
 	if err := cmd.Start(); err != nil {
