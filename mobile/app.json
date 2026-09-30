@@ -7,6 +7,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "io.github.muhammedaslan34.dsync",
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "dsync uses the camera to scan the pairing code shown on your computer.",
@@ -18,6 +19,7 @@
       }
     },
     "android": {
+      "package": "io.github.muhammedaslan34.dsync",
       "adaptiveIcon": {
         "backgroundColor": "#5b5bd6",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -39,8 +41,18 @@
       ],
       "expo-secure-store",
       "expo-sharing",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "./plugins/withReleaseSigning"
     ],
-    "backgroundColor": "#f7f7f9"
+    "backgroundColor": "#f7f7f9",
+    "scheme": "dsync-mobile"
   }
 }

@@ -1,14 +1,34 @@
 # dsync for phones
 
 A small React Native app that lets a phone join dsync: send text, photos and files to
-your computers, and save or share what they send back. It runs in **Expo Go**, so there
-is nothing to build or install besides Expo Go itself.
+your computers, and save or share what they send back. Install it from a release (APK for
+Android, .ipa for iPhone), or run it in **Expo Go** while working on it.
 
 It talks to dsync on the computer with the phone protocol in
 [`../docs/phone-protocol.md`](../docs/phone-protocol.md) (plain HTTP on port 47102,
 every body sealed with NaCl secretbox using a key shared through the QR code).
 
-## Run it
+## Install it
+
+Each [release](https://github.com/muhammedaslan34/dsync/releases) has the phone app,
+built by `.github/workflows/release.yml`:
+
+- **Android:** download `dsync-<version>-android.apk` on the phone and open it. Android
+  asks once to allow installing apps from the browser (or Files). Later versions install
+  over it and keep your paired computers.
+- **iPhone:** `dsync-<version>-ios-unsigned.ipa` isn't signed, because that needs a paid
+  Apple Developer account. Install it with [AltStore](https://altstore.io) or
+  [Sideloadly](https://sideloadly.io) from a computer, signed with your own Apple ID.
+  With a free Apple ID it has to be refreshed every 7 days (AltStore does that on its
+  own). On iOS 16 and later, turn on **Settings → Privacy & Security → Developer Mode**
+  first.
+
+The Android build is signed with dsync's release key (kept outside the repo; the
+workflow reads it from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets). Every release has to use the same
+key, or phones refuse the update. The app's version follows `../wails.json`.
+
+## Run it in Expo Go (development)
 
 1. Install **Expo Go** on the phone (App Store / Play Store).
 2. On the laptop:

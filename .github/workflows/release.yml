@@ -1,0 +1,210 @@
+# Builds what scripts/package.sh can't on Linux and attaches it to the
+# release: the macOS app (Apple Silicon and Intel in one), the Android APK
+# and the iOS app. Each needs its own toolchain, so they run on GitHub's
+# machines; the Windows and Linux builds come from scripts/package.sh.
+name: Release builds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload to (e.g. v1.0.9); empty builds master without uploading
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  REF: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+
+      - name: Read the version
+        run: |
+          echo "VERSION=$(sed -n 's/.*"productVersion": *"\([^"]*\)".*/\1/p' wails.json)" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: go test ./internal/...
+
+      - name: Build the app
+        run: wails build -platform darwin/universal -trimpath -ldflags "-s -w -X dsync/internal/version.Version=$VERSION"
+
+      - name: Build the command-line tool
+        run: |
+          for arch in amd64 arm64; do
+            GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X dsync/internal/version.Version=$VERSION" -o "dsync-$arch" ./cmd/dsync
+          done
+          lipo -create -output dsync dsync-amd64 dsync-arm64
+
+      - name: Make the disk image
+        run: |
+          app=$(ls -d build/bin/*.app | head -1)
+          mkdir dmg out
+          cp -R "$app" dmg/dsync.app
+          cp dsync dmg/dsync.app/Contents/MacOS/dsync
+          # Without a Developer ID the app is signed ad hoc, which Apple
+          # Silicon requires to run it at all.
+          codesign --force --deep --sign - dmg/dsync.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "dsync $VERSION" -srcfolder dmg -ov -format UDZO "out/dsync-$VERSION-macos-universal.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsync-macos
+          path: out/*
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm run test:crypto
+          npm run typecheck
+
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build the APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          DSYNC_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          DSYNC_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          DSYNC_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # Signed with dsync's key so each release installs over the last;
+          # without the secrets (a fork) it's signed with a throwaway key.
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export DSYNC_KEYSTORE="$RUNNER_TEMP/release.jks"
+          fi
+          cd android
+          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+          version=$(node -p "require('../../wails.json').info.productVersion")
+          mkdir -p ../../out
+          cp app/build/outputs/apk/release/app-release.apk "../../out/dsync-$version-android.apk"
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "../../out/dsync-$version-android.apk" | head -3 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsync-android
+          path: out/*
+
+  ios:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Use the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate the iOS project
+        run: npx expo prebuild --platform ios
+
+      - name: Build the app
+        run: |
+          # No Apple Developer account, so the app is built unsigned; it's
+          # signed when it's installed (AltStore, Sideloadly, ...).
+          xcodebuild -workspace ios/dsync.xcworkspace -scheme dsync \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -30
+          test "${PIPESTATUS[0]}" = 0
+
+      - name: Make the .ipa
+        run: |
+          version=$(node -p "require('../wails.json').info.productVersion")
+          mkdir -p Payload ../out
+          cp -R build/Build/Products/Release-iphoneos/dsync.app Payload/
+          zip -qr "../out/dsync-$version-ios-unsigned.ipa" Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsync-ios
+          path: out/*
+
+  publish:
+    needs: [macos, android, ios]
+    # Attach whatever built, even if one of the builds failed.
+    if: always() && (github.event_name == 'release' || inputs.tag != '')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          cd out
+          ls -la
+          [ -n "$(ls)" ] || { echo "nothing built"; exit 1; }
+          gh release upload "$TAG" * --clobber
+          # Add them to SHA256SUMS so they can be checked like the others.
+          gh release download "$TAG" --pattern SHA256SUMS --dir .. --clobber
+          for f in *; do
+            grep -v " $f\$" ../SHA256SUMS > ../SHA256SUMS.new || true
+            sha256sum "$f" >> ../SHA256SUMS.new
+            mv ../SHA256SUMS.new ../SHA256SUMS
+          done
+          gh release upload "$TAG" ../SHA256SUMS --clobber
