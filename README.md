@@ -2,6 +2,29 @@
 
 Send text (and soon files) between your Windows PC and Linux laptop.
 
+## Install
+
+Download the file for your system from `dist/release` (see *Packaging* below):
+
+- **Windows:** run `dsync-setup-VERSION-windows-amd64.exe`. It installs dsync (the app
+  and the `dsync.exe` command-line tool) to Program Files, adds Start menu and desktop
+  shortcuts, installs Microsoft WebView2 if missing, and lets dsync through Windows
+  Firewall on private networks. Uninstall it from *Settings → Apps*; your settings and
+  pairings in `%AppData%\dsync` are kept.
+- **Arch Linux / CachyOS:** `sudo pacman -U dsync-VERSION-1-x86_64.pkg.tar.zst`, then
+  `sudo ufw allow dsync` (or `sudo firewall-cmd --permanent --add-service=dsync`).
+- **Other Linux:** unpack `dsync-VERSION-linux-x86_64.tar.gz` and run `./install.sh`. It
+  installs for your user only (no root), adds dsync to the app menu, and offers to open
+  the firewall. `./uninstall.sh` removes it. Needs WebKitGTK 4.1.
+
+## Packaging
+
+`./scripts/package.sh` runs the tests, builds everything, and writes the three installers
+plus `SHA256SUMS` to `dist/release`. The version comes from `info.productVersion` in
+`wails.json`. It needs the build tools below, `makepkg` for the Arch package, and Docker:
+the Windows installer is made with NSIS, run from a small Debian image
+(`packaging/nsis`) that is built the first time.
+
 ## Build
 
 Needs Go 1.22+, Node.js and the Wails CLI:

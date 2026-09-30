@@ -8,9 +8,8 @@ import (
 
 	"dsync/internal/config"
 	"dsync/internal/proto"
+	"dsync/internal/version"
 )
-
-const version = "0.1.0"
 
 const usage = `dsync - send text and files between your computers
 
@@ -56,7 +55,7 @@ func main() {
 	case "control":
 		err = cmdControl(cfg, args)
 	case "version":
-		fmt.Println("dsync", version)
+		fmt.Println("dsync", version.Version)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:

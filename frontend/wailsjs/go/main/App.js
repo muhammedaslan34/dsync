@@ -153,3 +153,7 @@ export function Status() {
 export function Unpair(arg1) {
   return window['go']['main']['App']['Unpair'](arg1);
 }
+
+export function Version() {
+  return window['go']['main']['App']['Version']();
+}

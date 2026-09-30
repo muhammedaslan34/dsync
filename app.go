@@ -18,6 +18,7 @@ import (
 	"dsync/internal/discovery"
 	"dsync/internal/node"
 	"dsync/internal/proto"
+	"dsync/internal/version"
 )
 
 // App exposes the node to the frontend. Its exported methods are callable
@@ -269,3 +270,6 @@ func (a *App) SetSunshineLogin(user, password string) error {
 
 // OpenURL opens a web page, e.g. Sunshine's PIN page.
 func (a *App) OpenURL(url string) { wruntime.BrowserOpenURL(a.ctx, url) }
+
+// Version is the dsync version, shown in the settings.
+func (a *App) Version() string { return version.Version }

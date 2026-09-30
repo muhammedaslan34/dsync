@@ -5,7 +5,7 @@
 
   let {
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
-    bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL,
+    bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -208,5 +208,6 @@
         {/each}
       </div>
     </section>
+    {#if version}<p class="version muted small">dsync {version}</p>{/if}
   </div>
 </div>

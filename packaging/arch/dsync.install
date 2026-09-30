@@ -1,0 +1,10 @@
+post_install() {
+  echo "==> Other computers reach dsync on UDP 47100 and TCP 47101. To allow that:"
+  echo "      sudo ufw allow dsync"
+  echo "    or, with firewalld:"
+  echo "      sudo firewall-cmd --permanent --add-service=dsync && sudo firewall-cmd --reload"
+}
+
+post_upgrade() {
+  echo "==> Restart dsync (Quit from the tray icon, then open it) to use the new version."
+}

@@ -5,7 +5,7 @@
     PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
-    StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL,
+    StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -42,6 +42,7 @@
   let clipStatus = $state({ enabled: false, available: false })
   let bg = $state({})
   let hostInfo = $state({})
+  let version = $state('')
   let control = $state(null) // { peer, state } while setting up remote control
   let controlPins = $state([]) // PIN requests shown on this (controlled) computer
   let theme = $state(loadTheme())
@@ -252,6 +253,7 @@
   function openDialog(name) {
     dialog = name
     if (name === 'settings') {
+      Version().then((v) => (version = v))
       Background().then((b) => (bg = b))
       HostInfo().then((h) => (hostInfo = h))
     }
@@ -590,6 +592,7 @@
     {clipStatus}
     {bg}
     {hostInfo}
+    {version}
     onSunshineLogin={async (user, pw) => {
       await SetSunshineLogin(user, pw)
       hostInfo = await HostInfo()

@@ -12,7 +12,17 @@ import (
 // in the user's own folders.
 
 func autostartSupported() bool { return true }
-func appMenuSupported() bool   { return true }
+
+// appMenuSupported is false when a package already installed the app menu
+// entry system-wide.
+func appMenuSupported() bool {
+	for _, dir := range []string{"/usr/share/applications", "/usr/local/share/applications"} {
+		if _, err := os.Stat(filepath.Join(dir, "dsync.desktop")); err == nil {
+			return false
+		}
+	}
+	return true
+}
 
 func autostartFile() (string, error) {
 	dir, err := os.UserConfigDir()

@@ -1,0 +1,28 @@
+# Packages the prebuilt dsync for Arch Linux. scripts/package.sh fills in the
+# version and checksum and runs makepkg.
+pkgname=dsync
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Send text, files and the clipboard between your computers"
+arch=('x86_64')
+license=('LicenseRef-dsync')
+depends=('webkit2gtk-4.1' 'gtk3' 'libx11' 'glibc')
+optdepends=(
+  'moonlight-qt: control other computers'
+  'sunshine: let other computers control this one'
+  'gnome-shell-extension-appindicator: tray icon on GNOME'
+)
+install=dsync.install
+source=("dsync-${pkgver}-linux-x86_64.tar.gz")
+sha256sums=('@SHA256@')
+options=('!debug' '!strip')
+
+package() {
+  cd "dsync-${pkgver}-linux-x86_64"
+  install -Dm755 dsync-gui "$pkgdir/usr/bin/dsync-gui"
+  install -Dm755 dsync "$pkgdir/usr/bin/dsync"
+  install -Dm644 dsync.desktop "$pkgdir/usr/share/applications/dsync.desktop"
+  install -Dm644 dsync.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/dsync.png"
+  install -Dm644 ufw-dsync "$pkgdir/etc/ufw/applications.d/dsync"
+  install -Dm644 firewalld-dsync.xml "$pkgdir/usr/lib/firewalld/services/dsync.xml"
+}

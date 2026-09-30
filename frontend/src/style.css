@@ -919,3 +919,4 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .rc-login-saved { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
 .pair-code.with-copy { position: relative; }
 .pair-code.with-copy .icon-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.version { margin: 14px 0 0; text-align: center; }

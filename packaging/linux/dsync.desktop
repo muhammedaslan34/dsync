@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=dsync
+GenericName=File and clipboard sync
+Comment=Send text, files and the clipboard between your computers
+Exec=dsync-gui
+Icon=dsync
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=sync;share;send;clipboard;transfer;remote;
+StartupWMClass=dsync-gui

@@ -1,0 +1,4 @@
+[dsync]
+title=dsync
+description=Send text, files and the clipboard between your computers
+ports=47100/udp|47101/tcp

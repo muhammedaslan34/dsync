@@ -80,3 +80,5 @@ export function StartPair(arg1:string):Promise<string>;
 export function Status():Promise<string>;
 
 export function Unpair(arg1:string):Promise<void>;
+
+export function Version():Promise<string>;

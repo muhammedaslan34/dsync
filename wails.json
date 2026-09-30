@@ -9,5 +9,12 @@
   "build:tags": "webkit2_41",
   "author": {
     "name": "Muhammed Aslan"
+  },
+  "info": {
+    "companyName": "dsync",
+    "productName": "dsync",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026 Muhammed Aslan",
+    "comments": "Send text, files and the clipboard between your computers"
   }
 }

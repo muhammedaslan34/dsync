@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>dsync</short>
+  <description>Send text, files and the clipboard between your computers.</description>
+  <port protocol="udp" port="47100"/>
+  <port protocol="tcp" port="47101"/>
+</service>
