@@ -164,8 +164,20 @@ jobs:
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build | tail -30
-          test "${PIPESTATUS[0]}" = 0
+            build > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || {
+              # Show the failing steps' own output, not just the summary.
+              grep -nE 'error|Error|FAILED|failed' "$RUNNER_TEMP/xcodebuild.log" | tail -60
+              sed -n '/^PhaseScriptExecution/,/^$/p' "$RUNNER_TEMP/xcodebuild.log" | tail -150
+              exit 1
+            }
+          tail -5 "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/xcodebuild.log
 
       - name: Make the .ipa
         run: |
