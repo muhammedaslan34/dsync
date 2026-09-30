@@ -8,6 +8,7 @@ import * as Sharing from 'expo-sharing';
 import {
   type Computer,
   type Message,
+  AppError,
   DsyncError,
   PhoneClient,
   describeError,
@@ -37,7 +38,7 @@ export interface Pending {
   size: number;
   sent: number;
   status: 'sending' | 'failed';
-  error?: string;
+  error?: unknown; // shown with describeError, so it follows the language
   time: number;
 }
 
@@ -45,7 +46,7 @@ export interface Download {
   busy: boolean;
   got: number;
   size: number;
-  error?: string;
+  error?: unknown; // shown with describeError
   uri?: string; // cached file, once complete
 }
 
@@ -264,7 +265,7 @@ async function run(cid: string, key: string) {
       delivered(cid, key, m);
     }
   } catch (e) {
-    patchPending(cid, key, { status: 'failed', error: describeError(e) });
+    patchPending(cid, key, { status: 'failed', error: e });
   }
 }
 
@@ -339,9 +340,9 @@ export async function saveOrShare(cid: string, m: Message) {
       });
       patchDownload(k, { busy: false, uri: dest.uri, got: m.file.size });
     }
-    if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this phone');
+    if (!(await Sharing.isAvailableAsync())) throw new AppError('errors.noSharing', 'Sharing is not available on this phone');
     await Sharing.shareAsync(dest.uri, { dialogTitle: m.file.name });
   } catch (e) {
-    patchDownload(k, { busy: false, error: describeError(e) });
+    patchDownload(k, { busy: false, error: e });
   }
 }

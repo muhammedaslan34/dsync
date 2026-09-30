@@ -49,3 +49,24 @@ export async function removeComputer(id: string): Promise<void> {
   const ids = (await readIndex()).filter((x) => x !== id);
   await SecureStore.setItemAsync(INDEX_KEY, JSON.stringify(ids));
 }
+
+// ---------- app settings ----------
+
+const LANGUAGE_KEY = 'dsync.language';
+
+/** The chosen language ('system', 'en', 'ar', ...), or null if never set. */
+export async function loadLanguage(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(LANGUAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLanguage(value: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(LANGUAGE_KEY, value);
+  } catch {
+    // not saved: the choice still applies until the app restarts
+  }
+}

@@ -5,17 +5,19 @@ import type { Computer, Message } from '../dsync';
 import { fmtShort, osLabel } from '../format';
 import { EMPTY_THREAD, isOnline, pollOnce, useStore, type Thread } from '../store';
 import { useTheme } from '../theme';
-import { Avatar, Button, Header, Icon, Logo, useForeground, useInterval, useNow } from '../components/ui';
+import { type I18n, side, useDirection, useI18n } from '../i18n';
+import { Avatar, Button, Header, Icon, IconButton, Logo, useForeground, useInterval, useNow } from '../components/ui';
 
-function preview(m: Message | undefined): string {
+function preview(t: I18n['t'], m: Message | undefined): string {
   if (!m) return '';
-  const who = m.fromPhone ? 'You: ' : '';
-  if (m.file) return `${who}${m.file.name}`;
-  return who + (m.text ?? '').replace(/\s+/g, ' ').trim();
+  const text = m.file ? m.file.name : (m.text ?? '').replace(/\s+/g, ' ').trim();
+  return m.fromPhone ? t('list.you', { text }) : text;
 }
 
 export default function ComputersScreen({ nav }: { nav: Nav }) {
   const t = useTheme();
+  const { t: tr } = useI18n();
+  const { isRTL, row: dirRow, start } = useDirection();
   const insets = useSafeAreaInsets();
   const computers = useStore((s) => s.computers);
   const threads = useStore((s) => s.threads);
@@ -29,25 +31,25 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
     const th: Thread = threads[c.id] ?? EMPTY_THREAD;
     const last = th.messages[th.messages.length - 1];
     const online = isOnline(th, now);
-    let sub = preview(last);
-    if (!sub) sub = th.loaded ? 'No messages yet' : osLabel[c.os] ?? '';
+    let sub = preview(tr, last);
+    if (!sub) sub = th.loaded ? tr('list.noMessages') : osLabel[c.os] ?? '';
     return (
       <Pressable
         onPress={() => nav.go({ name: 'chat', cid: c.id })}
         style={({ pressed }) => [
           s.row,
-          { backgroundColor: t.raised, borderColor: t.border, opacity: pressed ? 0.85 : 1 },
+          { flexDirection: dirRow, backgroundColor: t.raised, borderColor: t.border, opacity: pressed ? 0.85 : 1 },
         ]}
       >
         <Avatar name={c.name} id={c.id} size={44} online={online} ringColor={t.raised} />
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <View style={s.rowTop}>
-            <Text numberOfLines={1} style={[s.name, { color: t.text }]}>
+          <View style={[s.rowTop, { flexDirection: dirRow }]}>
+            <Text numberOfLines={1} style={[s.name, { color: t.text, textAlign: start }]}>
               {c.name}
             </Text>
             {last ? <Text style={[s.time, { color: t.muted }]}>{fmtShort(last.time)}</Text> : null}
           </View>
-          <Text numberOfLines={1} style={[s.preview, { color: t.muted }]}>
+          <Text numberOfLines={1} style={[s.preview, { color: t.muted, textAlign: start }]}>
             {sub}
           </Text>
         </View>
@@ -58,18 +60,17 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
   return (
     <View style={{ flex: 1 }}>
       <Header
-        left={<View style={{ paddingLeft: 6 }}><Logo /></View>}
-        title={<Text style={[s.brand, { color: t.text }]}>dsync</Text>}
+        left={<View style={side(isRTL, { paddingLeft: 6 })}><Logo /></View>}
+        title={<Text style={[s.brand, { color: t.text, textAlign: start }]}>dsync</Text>}
+        right={<IconButton icon="settings-outline" label={tr('common.settings')} onPress={() => nav.go({ name: 'app' })} />}
       />
       {computers.length === 0 ? (
         <View style={s.empty}>
           <View style={[s.pulse, { backgroundColor: t.accentSoft }]}>
             <Icon name="laptop-outline" size={30} color={t.accent} />
           </View>
-          <Text style={[s.emptyTitle, { color: t.text }]}>No computers yet</Text>
-          <Text style={[s.emptyText, { color: t.muted }]}>
-            On your computer, open dsync → Settings → Connect a phone, then scan the code it shows.
-          </Text>
+          <Text style={[s.emptyTitle, { color: t.text }]}>{tr('list.emptyTitle')}</Text>
+          <Text style={[s.emptyText, { color: t.muted }]}>{tr('list.emptyText')}</Text>
         </View>
       ) : (
         <FlatList
@@ -77,11 +78,15 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
           keyExtractor={(c) => c.id}
           renderItem={row}
           contentContainerStyle={{ padding: 12, gap: 8 }}
-          ListHeaderComponent={<Text style={[s.label, { color: t.muted }]}>COMPUTERS</Text>}
+          ListHeaderComponent={
+            <Text style={[s.label, side(isRTL, { marginLeft: 6 }), { color: t.muted, textAlign: start }, isRTL && s.labelArabic]}>
+              {tr('list.label')}
+            </Text>
+          }
         />
       )}
       <View style={{ padding: 16, paddingBottom: insets.bottom + 16 }}>
-        <Button title="Connect a computer" icon="qr-code-outline" onPress={() => nav.go({ name: 'scan' })} />
+        <Button title={tr('list.connect')} icon="qr-code-outline" onPress={() => nav.go({ name: 'scan' })} />
       </View>
     </View>
   );
@@ -89,16 +94,17 @@ export default function ComputersScreen({ nav }: { nav: Nav }) {
 
 const s = StyleSheet.create({
   brand: { fontSize: 19, fontWeight: '700', letterSpacing: -0.2 },
-  label: { fontSize: 11, fontWeight: '600', letterSpacing: 0.7, marginLeft: 6, marginBottom: 2 },
+  label: { fontSize: 11, fontWeight: '600', letterSpacing: 0.7, marginBottom: 2 },
+  // Letter spacing breaks up joined Arabic letters.
+  labelArabic: { letterSpacing: 0, fontSize: 12 },
   row: {
-    flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
   },
-  rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowTop: { alignItems: 'center', gap: 8 },
   name: { flex: 1, fontSize: 15.5, fontWeight: '600' },
   time: { fontSize: 11.5 },
   preview: { fontSize: 13.5 },

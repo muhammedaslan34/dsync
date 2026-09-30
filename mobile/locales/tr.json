@@ -1,0 +1,7 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "dsync",
+    "NSCameraUsageDescription": "dsync, bilgisayarında gösterilen eşleştirme kodunu taramak için kamerayı kullanır.",
+    "NSLocalNetworkUsageDescription": "dsync, yerel ağ üzerinden bilgisayarlarındaki dsync ile iletişim kurar."
+  }
+}

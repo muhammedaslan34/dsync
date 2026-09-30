@@ -15,7 +15,8 @@
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "CFBundleAllowMixedLocalizations": true
       }
     },
     "android": {
@@ -63,9 +64,35 @@
             "backgroundColor": "#0f0f14"
           }
         }
+      ],
+      [
+        "expo-localization",
+        {
+          "supportsRTL": false,
+          "supportedLocales": {
+            "ios": [
+              "en",
+              "ar",
+              "tr",
+              "fr"
+            ],
+            "android": [
+              "en",
+              "ar",
+              "tr",
+              "fr"
+            ]
+          }
+        }
       ]
     ],
     "backgroundColor": "#f7f7f9",
-    "scheme": "dsync-mobile"
+    "scheme": "dsync-mobile",
+    "locales": {
+      "en": "./locales/en.json",
+      "ar": "./locales/ar.json",
+      "tr": "./locales/tr.json",
+      "fr": "./locales/fr.json"
+    }
   }
 }

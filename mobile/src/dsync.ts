@@ -3,6 +3,7 @@
 
 import { File, FileMode } from 'expo-file-system';
 import { EnvelopeError, KEY_SIZE, fromBase64, openEnvelope, sealEnvelope, toBase64, utf8Encode } from './crypto';
+import { type MsgKey, type Vars, t } from './i18n';
 
 export const DEFAULT_PORT = 47102;
 export const MAX_TEXT_BYTES = 1 << 20;
@@ -69,10 +70,26 @@ export type ErrorKind =
 export class DsyncError extends Error {
   kind: ErrorKind;
   status?: number;
-  constructor(kind: ErrorKind, message: string, status?: number) {
+  /** A translated message to show instead of `message` (which stays English, for logs). */
+  msgKey?: MsgKey;
+  vars?: Vars;
+  constructor(kind: ErrorKind, message: string, status?: number, msgKey?: MsgKey, vars?: Vars) {
     super(message);
     this.kind = kind;
     this.status = status;
+    this.msgKey = msgKey;
+    this.vars = vars;
+  }
+}
+
+/** A local failure (reading a file, a stalled download) with a translated message. */
+export class AppError extends Error {
+  msgKey: MsgKey;
+  vars?: Vars;
+  constructor(msgKey: MsgKey, message: string, vars?: Vars) {
+    super(message);
+    this.msgKey = msgKey;
+    this.vars = vars;
   }
 }
 
@@ -80,26 +97,29 @@ export function isDsyncError(e: unknown, kind?: ErrorKind): e is DsyncError {
   return e instanceof DsyncError && (kind === undefined || e.kind === kind);
 }
 
-/** A short, human message for an error. */
+/** A short, human message for an error, in the current language. */
 export function describeError(e: unknown): string {
+  if (e instanceof AppError) return t(e.msgKey, e.vars);
   if (e instanceof DsyncError) {
     switch (e.kind) {
       case 'unreachable':
-        return "Can't reach the computer. Phone and computer must be on the same Wi-Fi, and dsync must be running.";
+        return t('errors.unreachable');
       case 'expired':
-        return 'This code has expired or was already used. Show a new code on the computer.';
+        return t('errors.expired');
       case 'unauthorized':
-        return 'This computer no longer knows this phone. Forget it here and connect again.';
+        return t('errors.unauthorized');
       case 'clock':
-        return "The phone's and the computer's clocks are more than 2 minutes apart. Check the time settings.";
+        return t('errors.clock');
       case 'badReply':
-        return 'The computer sent a reply that could not be decrypted.';
+        return e.msgKey ? t(e.msgKey, e.vars) : t('errors.badReply');
       default:
-        return e.message || 'Something went wrong';
+        // Other replies carry the computer's own (English) message.
+        if (e.msgKey) return t(e.msgKey, e.vars);
+        return e.message || t('errors.generic');
     }
   }
   if (e instanceof Error && e.message) return e.message;
-  return 'Something went wrong';
+  return t('errors.generic');
 }
 
 // ---------- pairing URL ----------
@@ -116,7 +136,7 @@ function decodeParam(s: string): string {
 export function parsePairingUrl(raw: string): PairingCode {
   const text = raw.trim();
   const m = /^dsync:\/\/pair\/?\?(.*)$/i.exec(text);
-  if (!m) throw new DsyncError('badCode', "That's not a dsync pairing code. On the computer open Settings → Connect a phone.");
+  if (!m) throw new DsyncError('badCode', "That's not a dsync pairing code.", undefined, 'errors.notACode');
   const params: Record<string, string> = {};
   for (const part of m[1].split('#')[0].split('&')) {
     if (!part) continue;
@@ -124,9 +144,10 @@ export function parsePairingUrl(raw: string): PairingCode {
     const k = decodeParam(eq < 0 ? part : part.slice(0, eq));
     params[k] = eq < 0 ? '' : decodeParam(part.slice(eq + 1));
   }
-  const bad = (what: string) => new DsyncError('badCode', `The pairing code is incomplete (${what}). Show a new code on the computer.`);
+  const bad = (what: string) =>
+    new DsyncError('badCode', `The pairing code is incomplete (${what}).`, undefined, 'errors.codeIncomplete', { what });
   const v = Number(params.v ?? '1');
-  if (v !== 1) throw new DsyncError('badCode', 'This pairing code is from a newer dsync. Update the phone app.');
+  if (v !== 1) throw new DsyncError('badCode', 'This pairing code is from a newer dsync.', undefined, 'errors.codeNewer');
   if (!params.pid) throw bad('pid');
   let key: Uint8Array;
   try {
@@ -143,7 +164,7 @@ export function parsePairingUrl(raw: string): PairingCode {
     .map((a) => a.trim())
     .filter(Boolean);
   if (addrs.length === 0) throw bad('addr');
-  return { v, pid: params.pid, key, name: params.name || 'Computer', cid: params.cid, os: params.os || '', port, addrs };
+  return { v, pid: params.pid, key, name: params.name || t('computer.title'), cid: params.cid, os: params.os || '', port, addrs };
 }
 
 // ---------- requests ----------
@@ -237,7 +258,7 @@ export async function pair(
         { name: phone.name, platform: phone.platform },
         4000,
       );
-      if (!r || typeof r.phoneId !== 'string' || !r.phoneId) throw new DsyncError('badReply', 'The computer sent an unexpected reply');
+      if (!r || typeof r.phoneId !== 'string' || !r.phoneId) throw new DsyncError('badReply', 'The computer sent an unexpected reply', undefined, 'errors.unexpectedReply');
       return {
         id: r.computerId || code.cid,
         name: r.computerName || code.name,
@@ -291,7 +312,7 @@ export class PhoneClient {
   }
 
   async sendText(text: string): Promise<Message> {
-    if (utf8Encode(text).length > MAX_TEXT_BYTES) throw new DsyncError('tooBig', 'Text is too long (at most 1 MB)');
+    if (utf8Encode(text).length > MAX_TEXT_BYTES) throw new DsyncError('tooBig', 'Text is too long (at most 1 MB)', undefined, 'errors.tooLong');
     const r = await this.call<{ message: Message }>('text', { text }, 20000);
     return r.message;
   }
@@ -311,7 +332,7 @@ export class PhoneClient {
   ): Promise<Message> {
     const f = new File(file.uri);
     const size = f.size;
-    if (typeof size !== 'number' || size < 0) throw new Error('Could not read the file');
+    if (typeof size !== 'number' || size < 0) throw new AppError('errors.cantRead', 'Could not read the file');
     const start = await this.call<{ uploadId: string; chunkSize: number }>('upload/start', { name: file.name, size });
     const chunkSize = Math.max(1, Math.floor(start.chunkSize || 512 * 1024));
     onProgress(0, size);
@@ -320,16 +341,16 @@ export class PhoneClient {
       const h = f.open(FileMode.ReadOnly);
       try {
         while (offset < size) {
-          if (isCanceled()) throw new Error('Canceled');
+          if (isCanceled()) throw new AppError('errors.canceled', 'Canceled');
           h.offset = offset;
           const bytes = h.readBytes(Math.min(chunkSize, size - offset));
-          if (bytes.length === 0) throw new Error('The file ended early');
+          if (bytes.length === 0) throw new AppError('errors.endedEarly', 'The file ended early');
           const r = await this.call<{ received: number }>(
             'upload/chunk',
             { uploadId: start.uploadId, offset, data: toBase64(bytes) },
             60000,
           );
-          if (r.received !== offset + bytes.length) throw new Error('The computer lost part of the file');
+          if (r.received !== offset + bytes.length) throw new AppError('errors.lostPart', 'The computer lost part of the file');
           offset = r.received;
           onProgress(offset, size);
         }
@@ -362,7 +383,7 @@ export class PhoneClient {
         offset += bytes.length;
         onProgress(offset, r.size);
         if (r.eof || offset >= r.size) break;
-        if (bytes.length === 0) throw new Error('The download stalled');
+        if (bytes.length === 0) throw new AppError('errors.stalled', 'The download stalled');
       }
     } catch (e) {
       h.close();

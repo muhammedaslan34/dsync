@@ -16,7 +16,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Nav } from '../../App';
-import type { Message } from '../dsync';
+import { type Message, describeError } from '../dsync';
 import { dayLabel, fileKind, fmtShort, fmtSize, fmtTime, sameDay, type FileKind } from '../format';
 import {
   EMPTY_THREAD,
@@ -34,7 +34,8 @@ import {
   type Pending,
 } from '../store';
 import { type Theme, mono, useTheme } from '../theme';
-import { Avatar, Header, Icon, IconButton, useForeground, useInterval, useNow, type IconName } from '../components/ui';
+import { type Direction, type I18n, side, useDirection, useI18n } from '../i18n';
+import { Avatar, BackButton, Header, Icon, IconButton, useForeground, useInterval, useNow, type IconName } from '../components/ui';
 
 type Item =
   | { type: 'day'; key: string; label: string }
@@ -62,6 +63,9 @@ function nameFromUri(uri: string, fallback: string): string {
 
 export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
   const t = useTheme();
+  const { t: tr } = useI18n();
+  const dir = useDirection();
+  const { row: dirRow, start } = dir;
   const insets = useSafeAreaInsets();
   const computer = useStore((s) => s.computers.find((c) => c.id === cid));
   const thread = useStore((s) => s.threads[cid] ?? EMPTY_THREAD);
@@ -93,38 +97,38 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
     for (const m of thread.messages) push(m.time, m.fromPhone, (first) => ({ type: 'msg', key: `m${m.id}`, m, first }));
     for (const p of pending) push(p.time, true, (first) => ({ type: 'pending', key: p.key, p, first }));
     return out.reverse(); // the list is inverted: newest at the bottom
-  }, [thread.messages, pending]);
+  }, [thread.messages, pending, tr]); // tr: day labels follow the language
 
   if (!computer) {
     return (
       <View style={{ flex: 1 }}>
-        <Header left={<IconButton icon="chevron-back" label="Back" onPress={nav.back} color={t.text} />} title={null} />
+        <Header left={<BackButton onPress={nav.back} />} title={null} />
       </View>
     );
   }
 
   const online = isOnline(thread, now);
   let status: { text: string; color: string };
-  if (online) status = { text: 'Online', color: t.online };
-  else if (thread.error?.kind === 'unauthorized') status = { text: 'Not paired any more', color: t.danger };
-  else if (!thread.lastOk && !thread.error) status = { text: 'Connecting…', color: t.muted };
-  else status = { text: thread.lastOk ? `Offline · last seen ${fmtShort(thread.lastOk)}` : 'Offline', color: t.muted };
+  if (online) status = { text: tr('chat.online'), color: t.online };
+  else if (thread.error?.kind === 'unauthorized') status = { text: tr('chat.notPaired'), color: t.danger };
+  else if (!thread.lastOk && !thread.error) status = { text: tr('chat.connecting'), color: t.muted };
+  else status = { text: thread.lastOk ? tr('chat.offlineSeen', { time: fmtShort(thread.lastOk) }) : tr('chat.offline'), color: t.muted };
 
   const showBanner = !online && thread.error && ['unauthorized', 'clock', 'badReply', 'unreachable'].includes(thread.error.kind);
   let banner = '';
   if (thread.error) {
     switch (thread.error.kind) {
       case 'unauthorized':
-        banner = 'This computer no longer knows this phone. Forget it in settings and connect again.';
+        banner = tr('chat.bannerUnauthorized');
         break;
       case 'clock':
-        banner = "The phone's and the computer's clocks are more than 2 minutes apart.";
+        banner = tr('chat.bannerClock');
         break;
       case 'badReply':
-        banner = "The computer's replies can't be decrypted. Forget it and connect again.";
+        banner = tr('chat.bannerBadReply');
         break;
       default:
-        banner = "Can't reach the computer. Phone and computer must be on the same Wi-Fi, and dsync must be running.";
+        banner = tr('chat.bannerUnreachable');
     }
   }
 
@@ -180,12 +184,14 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
         </View>
       );
     }
-    if (item.type === 'pending') return <PendingBubble t={t} cid={cid} p={item.p} first={item.first} />;
+    if (item.type === 'pending') return <PendingBubble t={t} tr={tr} dir={dir} cid={cid} p={item.p} first={item.first} />;
     const m = item.m;
     if (m.file) {
       return (
         <FileBubble
           t={t}
+          tr={tr}
+          dir={dir}
           m={m}
           first={item.first}
           download={downloads[downloadKey(cid, m.id)]}
@@ -195,23 +201,19 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
     }
     const out = m.fromPhone;
     return (
-      <View style={[s.msg, out && s.msgOut, item.first && s.first]}>
+      <View style={[s.msg, msgSide(dir, out), item.first && s.first]}>
         <Pressable
           onLongPress={() => void copy(m)}
-          style={[
-            s.bubble,
-            bubbleColors(t, out),
-            item.first && (out ? s.firstOut : s.firstIn),
-          ]}
+          style={[s.bubble, bubbleColors(t, out), item.first && firstCorner(dir, out)]}
         >
           <Text selectable style={[s.mono, { color: out ? t.bubbleOutText : t.text }]}>
             {m.text}
           </Text>
-          <Text style={[s.stamp, { color: out ? t.bubbleOutMuted : t.muted }]}>{fmtTime(m.time)}</Text>
+          <Text style={[s.stamp, { color: out ? t.bubbleOutMuted : t.muted, textAlign: dir.end }]}>{fmtTime(m.time)}</Text>
         </Pressable>
         <IconButton
           icon={copied === m.id ? 'checkmark' : 'copy-outline'}
-          label="Copy"
+          label={tr('chat.copy')}
           size={17}
           color={copied === m.id ? t.ok : t.muted}
           onPress={() => void copy(m)}
@@ -224,26 +226,26 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <Header
-        left={<IconButton icon="chevron-back" label="Back" onPress={nav.back} color={t.text} />}
+        left={<BackButton onPress={nav.back} />}
         title={
-          <Pressable onPress={() => nav.go({ name: 'settings', cid })} style={s.headTitle}>
+          <Pressable onPress={() => nav.go({ name: 'settings', cid })} style={[s.headTitle, { flexDirection: dirRow }]}>
             <Avatar name={computer.name} id={computer.id} size={36} online={online} ringColor={t.panel} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={[s.headName, { color: t.text }]}>
+              <Text numberOfLines={1} style={[s.headName, { color: t.text, textAlign: start }]}>
                 {computer.name}
               </Text>
-              <Text numberOfLines={1} style={[s.headStatus, { color: status.color }]}>
+              <Text numberOfLines={1} style={[s.headStatus, { color: status.color, textAlign: start }]}>
                 {status.text}
               </Text>
             </View>
           </Pressable>
         }
-        right={<IconButton icon="settings-outline" label="Computer settings" onPress={() => nav.go({ name: 'settings', cid })} />}
+        right={<IconButton icon="settings-outline" label={tr('chat.computerSettings')} onPress={() => nav.go({ name: 'settings', cid })} />}
       />
       {showBanner ? (
-        <View style={[s.banner, { backgroundColor: t.dangerSoft }]}>
+        <View style={[s.banner, { flexDirection: dirRow, backgroundColor: t.dangerSoft }]}>
           <Icon name="alert-circle" size={17} color={t.danger} />
-          <Text style={[s.bannerText, { color: t.danger }]}>{banner}</Text>
+          <Text style={[s.bannerText, { color: t.danger, textAlign: start }]}>{banner}</Text>
         </View>
       ) : null}
 
@@ -254,10 +256,8 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
               <View style={[s.emptyIcon, { backgroundColor: t.accentSoft }]}>
                 <Icon name="chatbubbles-outline" size={28} color={t.accent} />
               </View>
-              <Text style={[s.emptyTitle, { color: t.text }]}>Nothing here yet</Text>
-              <Text style={[s.emptyText, { color: t.muted }]}>
-                Send text, a photo or a file to {computer.name}. Things sent from the computer show up here.
-              </Text>
+              <Text style={[s.emptyTitle, { color: t.text }]}>{tr('chat.emptyTitle')}</Text>
+              <Text style={[s.emptyText, { color: t.muted }]}>{tr('chat.emptyText', { name: computer.name })}</Text>
             </>
           ) : (
             <ActivityIndicator color={t.accent} />
@@ -275,21 +275,23 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
       )}
 
       <View style={[s.composerWrap, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-        <View style={[s.composer, { backgroundColor: t.raised, borderColor: t.borderStrong }]}>
-          <IconButton icon="add" label="Attach" size={24} onPress={() => setAttachOpen(true)} />
+        <View style={[s.composer, { flexDirection: dirRow, backgroundColor: t.raised, borderColor: t.borderStrong }]}>
+          <IconButton icon="add" label={tr('chat.attach')} size={24} onPress={() => setAttachOpen(true)} />
           <TextInput
             value={text}
             onChangeText={setText}
-            placeholder={`Message ${computer.name}`}
+            // An isolate keeps the Arabic placeholder in order even where the field's own direction is LTR (web).
+            placeholder={dir.isRTL ? `\u2067${tr('chat.placeholder', { name: computer.name })}\u2069` : tr('chat.placeholder', { name: computer.name })}
             placeholderTextColor={t.muted}
             multiline
-            style={[s.input, { color: t.text }]}
+            // The placeholder starts at the reading side; typed text keeps its own direction.
+            style={[s.input, { color: t.text }, !text && { textAlign: start }]}
           />
-          <IconButton icon="clipboard-outline" label="Paste clipboard" size={20} onPress={() => void paste()} />
+          <IconButton icon="clipboard-outline" label={tr('chat.pasteClipboard')} size={20} onPress={() => void paste()} />
           <Pressable
             onPress={send}
             disabled={!text.trim()}
-            accessibilityLabel="Send"
+            accessibilityLabel={tr('chat.send')}
             style={({ pressed }) => [s.send, { backgroundColor: t.accent, opacity: !text.trim() ? 0.45 : pressed ? 0.8 : 1 }]}
           >
             <Icon name="arrow-up" size={20} color={t.accentText} />
@@ -300,9 +302,9 @@ export default function ChatScreen({ cid, nav }: { cid: string; nav: Nav }) {
       <Modal visible={attachOpen} transparent animationType="fade" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={s.backdrop} onPress={() => setAttachOpen(false)}>
           <View style={[s.sheet, { backgroundColor: t.panel, paddingBottom: insets.bottom + 12 }]}>
-            <SheetRow t={t} icon="images-outline" title="Photo or video" onPress={() => void pickMedia()} />
-            <SheetRow t={t} icon="document-outline" title="File" onPress={() => void pickFile()} />
-            <SheetRow t={t} icon="close" title="Cancel" muted onPress={() => setAttachOpen(false)} />
+            <SheetRow t={t} dir={dir} icon="images-outline" title={tr('chat.photoOrVideo')} onPress={() => void pickMedia()} />
+            <SheetRow t={t} dir={dir} icon="document-outline" title={tr('chat.file')} onPress={() => void pickFile()} />
+            <SheetRow t={t} dir={dir} icon="close" title={tr('common.cancel')} muted onPress={() => setAttachOpen(false)} />
           </View>
         </Pressable>
       </Modal>
@@ -316,13 +318,23 @@ function bubbleColors(t: Theme, out: boolean) {
     : { backgroundColor: t.bubbleIn, borderColor: t.border };
 }
 
-function SheetRow({ t, icon, title, onPress, muted }: { t: Theme; icon: IconName; title: string; onPress: () => void; muted?: boolean }) {
+/** Which side a bubble sits on: the phone's own on the end side (right, or left in Arabic). */
+function msgSide(dir: Direction, out: boolean) {
+  return { flexDirection: out !== dir.isRTL ? 'row-reverse' : 'row' } as const;
+}
+
+/** The first bubble of a run gets a sharp corner towards its side. */
+function firstCorner(dir: Direction, out: boolean) {
+  return side(dir.isRTL, out ? { borderTopRightRadius: 5 } : { borderTopLeftRadius: 5 });
+}
+
+function SheetRow({ t, dir, icon, title, onPress, muted }: { t: Theme; dir: Direction; icon: IconName; title: string; onPress: () => void; muted?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [s.sheetRow, { backgroundColor: pressed ? t.hover : 'transparent' }]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [s.sheetRow, { flexDirection: dir.row, backgroundColor: pressed ? t.hover : 'transparent' }]}>
       <View style={[s.sheetIcon, { backgroundColor: muted ? t.hover : t.accentSoft }]}>
         <Icon name={icon} size={20} color={muted ? t.muted : t.accent} />
       </View>
-      <Text style={[s.sheetText, { color: muted ? t.muted : t.text }]}>{title}</Text>
+      <Text style={[s.sheetText, { color: muted ? t.muted : t.text, textAlign: dir.start }]}>{title}</Text>
     </Pressable>
   );
 }
@@ -338,15 +350,15 @@ function FileIcon({ t, name, out }: { t: Theme; name: string; out: boolean }) {
   );
 }
 
-function Bar({ t, out, frac }: { t: Theme; out: boolean; frac: number }) {
+function Bar({ t, dir, out, frac }: { t: Theme; dir: Direction; out: boolean; frac: number }) {
   return (
     <View style={[s.bar, { backgroundColor: out ? 'rgba(255,255,255,0.22)' : t.hover }]}>
-      <View style={[s.fill, { width: `${Math.round(Math.min(1, Math.max(0, frac)) * 100)}%`, backgroundColor: out ? '#fff' : t.accent }]} />
+      <View style={[s.fill, { alignSelf: dir.isRTL ? 'flex-end' : 'flex-start', width: `${Math.round(Math.min(1, Math.max(0, frac)) * 100)}%`, backgroundColor: out ? '#fff' : t.accent }]} />
     </View>
   );
 }
 
-function Pill({ t, out, icon, title, onPress, disabled }: { t: Theme; out: boolean; icon: IconName; title: string; onPress: () => void; disabled?: boolean }) {
+function Pill({ t, dir, out, icon, title, onPress, disabled }: { t: Theme; dir: Direction; out: boolean; icon: IconName; title: string; onPress: () => void; disabled?: boolean }) {
   const fg = out ? '#fff' : t.accent;
   return (
     <Pressable
@@ -354,7 +366,7 @@ function Pill({ t, out, icon, title, onPress, disabled }: { t: Theme; out: boole
       disabled={disabled}
       style={({ pressed }) => [
         s.pill,
-        { backgroundColor: out ? 'rgba(255,255,255,0.16)' : t.accentSoft, opacity: disabled ? 0.5 : pressed ? 0.75 : 1 },
+        { flexDirection: dir.row, backgroundColor: out ? 'rgba(255,255,255,0.16)' : t.accentSoft, opacity: disabled ? 0.5 : pressed ? 0.75 : 1 },
       ]}
     >
       <Icon name={icon} size={15} color={fg} />
@@ -363,93 +375,101 @@ function Pill({ t, out, icon, title, onPress, disabled }: { t: Theme; out: boole
   );
 }
 
-function FileBubble({ t, m, first, download, onSave }: { t: Theme; m: Message; first: boolean; download?: Download; onSave: () => void }) {
+type BubbleProps = { t: Theme; tr: I18n['t']; dir: Direction; first: boolean };
+
+function FileBubble({ t, tr, dir, m, first, download, onSave }: BubbleProps & { m: Message; download?: Download; onSave: () => void }) {
   const f = m.file!;
   const out = m.fromPhone;
   const sub = out ? t.bubbleOutMuted : t.muted;
   let state = '';
-  if (f.status === 'active') state = out ? 'Sending…' : 'Receiving…';
-  else if (f.status === 'failed') state = 'Failed';
-  else if (f.status === 'canceled') state = 'Canceled';
-  else if (out) state = 'Sent';
+  if (f.status === 'active') state = out ? tr('chat.sending') : tr('chat.receiving');
+  else if (f.status === 'failed') state = tr('chat.failed');
+  else if (f.status === 'canceled') state = tr('chat.canceled');
+  else if (out) state = tr('chat.sent');
   const canSave = !out && f.status === 'done';
   const busy = !!download?.busy;
   return (
-    <View style={[s.msg, out && s.msgOut, first && s.first]}>
-      <View style={[s.bubble, s.fileBubble, bubbleColors(t, out), first && (out ? s.firstOut : s.firstIn)]}>
-        <View style={s.fileCard}>
+    <View style={[s.msg, msgSide(dir, out), first && s.first]}>
+      <View style={[s.bubble, s.fileBubble, bubbleColors(t, out), first && firstCorner(dir, out)]}>
+        <View style={[s.fileCard, { flexDirection: dir.row }]}>
           <FileIcon t={t} name={f.name} out={out} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={[s.fileName, { color: out ? t.bubbleOutText : t.text }]}>
-              {f.name}
+            <FileName name={f.name} dir={dir} color={out ? t.bubbleOutText : t.text} />
+            <Text style={[s.fileSubText, { color: sub, textAlign: dir.start }]}>
+              {busy ? tr('chat.progress', { done: fmtSize(download!.got), total: fmtSize(f.size) }) : fmtSize(f.size)}
+              {state ? ` · ${state}` : ''}
             </Text>
-            <View style={s.fileSub}>
-              <Text style={[s.fileSubText, { color: sub }]}>
-                {busy ? `${fmtSize(download!.got)} of ${fmtSize(f.size)}` : fmtSize(f.size)}
-                {state ? ` · ${state}` : ''}
-              </Text>
-            </View>
           </View>
         </View>
-        {busy ? <Bar t={t} out={out} frac={f.size ? download!.got / f.size : 0} /> : null}
-        {f.error ? <Text numberOfLines={2} style={[s.fileError, { color: out ? '#ffd0d0' : t.danger }]}>{f.error}</Text> : null}
-        {download?.error && !busy ? (
-          <Text numberOfLines={3} style={[s.fileError, { color: t.danger }]}>{download.error}</Text>
+        {busy ? <Bar t={t} dir={dir} out={out} frac={f.size ? download!.got / f.size : 0} /> : null}
+        {/* f.error comes from the computer, in its own words. */}
+        {f.error ? <Text numberOfLines={2} style={[s.fileError, { color: out ? '#ffd0d0' : t.danger, textAlign: dir.start }]}>{f.error}</Text> : null}
+        {download?.error != null && !busy ? (
+          <Text numberOfLines={3} style={[s.fileError, { color: t.danger, textAlign: dir.start }]}>{describeError(download.error)}</Text>
         ) : null}
         {canSave ? (
-          <View style={s.fileActions}>
+          <View style={[s.fileActions, { flexDirection: dir.row }]}>
             <Pill
               t={t}
+              dir={dir}
               out={out}
-              icon={busy ? 'hourglass-outline' : download?.error ? 'refresh' : 'share-outline'}
-              title={busy ? 'Downloading…' : download?.error ? 'Retry' : 'Save / Share'}
+              icon={busy ? 'hourglass-outline' : download?.error != null ? 'refresh' : 'share-outline'}
+              title={busy ? tr('chat.downloading') : download?.error != null ? tr('chat.retry') : tr('chat.saveShare')}
               disabled={busy}
               onPress={onSave}
             />
           </View>
         ) : null}
-        <Text style={[s.stamp, { color: sub }]}>{fmtTime(m.time)}</Text>
+        <Text style={[s.stamp, { color: sub, textAlign: dir.end }]}>{fmtTime(m.time)}</Text>
       </View>
     </View>
   );
 }
 
-function PendingBubble({ t, cid, p, first }: { t: Theme; cid: string; p: Pending; first: boolean }) {
+/** A file name, aligned to the reading side; its own letters decide its direction. */
+function FileName({ name, dir, color }: { name: string; dir: Direction; color: string }) {
+  return (
+    <Text numberOfLines={1} style={[s.fileName, { color, textAlign: dir.start }]}>
+      {name}
+    </Text>
+  );
+}
+
+function PendingBubble({ t, tr, dir, cid, p, first }: BubbleProps & { cid: string; p: Pending }) {
   const failed = p.status === 'failed';
   const actions = failed ? (
-    <View style={s.fileActions}>
-      <Pill t={t} out icon="refresh" title="Retry" onPress={() => retryPending(cid, p.key)} />
-      <Pill t={t} out icon="close" title="Discard" onPress={() => dismissPending(cid, p.key)} />
+    <View style={[s.fileActions, { flexDirection: dir.row }]}>
+      <Pill t={t} dir={dir} out icon="refresh" title={tr('chat.retry')} onPress={() => retryPending(cid, p.key)} />
+      <Pill t={t} dir={dir} out icon="close" title={tr('chat.discard')} onPress={() => dismissPending(cid, p.key)} />
     </View>
   ) : null;
-  const err = failed && p.error ? <Text style={[s.fileError, { color: '#ffd0d0' }]}>{p.error}</Text> : null;
+  const err =
+    failed && p.error != null ? <Text style={[s.fileError, { color: '#ffd0d0', textAlign: dir.start }]}>{describeError(p.error)}</Text> : null;
   if (p.kind === 'text') {
     return (
-      <View style={[s.msg, s.msgOut, first && s.first]}>
-        <View style={[s.bubble, bubbleColors(t, true), first && s.firstOut, { opacity: failed ? 1 : 0.75 }]}>
+      <View style={[s.msg, msgSide(dir, true), first && s.first]}>
+        <View style={[s.bubble, bubbleColors(t, true), first && firstCorner(dir, true), { opacity: failed ? 1 : 0.75 }]}>
           <Text style={[s.mono, { color: t.bubbleOutText }]}>{p.text}</Text>
           {err}
           {actions}
-          <Text style={[s.stamp, { color: t.bubbleOutMuted }]}>{failed ? 'Not sent' : 'Sending…'}</Text>
+          <Text style={[s.stamp, { color: t.bubbleOutMuted, textAlign: dir.end }]}>{failed ? tr('chat.notSent') : tr('chat.sending')}</Text>
         </View>
       </View>
     );
   }
   return (
-    <View style={[s.msg, s.msgOut, first && s.first]}>
-      <View style={[s.bubble, s.fileBubble, bubbleColors(t, true), first && s.firstOut]}>
-        <View style={s.fileCard}>
+    <View style={[s.msg, msgSide(dir, true), first && s.first]}>
+      <View style={[s.bubble, s.fileBubble, bubbleColors(t, true), first && firstCorner(dir, true)]}>
+        <View style={[s.fileCard, { flexDirection: dir.row }]}>
           <FileIcon t={t} name={p.name ?? ''} out />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={[s.fileName, { color: t.bubbleOutText }]}>
-              {p.name}
-            </Text>
-            <Text style={[s.fileSubText, { color: t.bubbleOutMuted }]}>
-              {failed ? `${fmtSize(p.size)} · Failed` : `${fmtSize(p.sent)} of ${fmtSize(p.size)}`}
+            <FileName name={p.name ?? ''} dir={dir} color={t.bubbleOutText} />
+            <Text style={[s.fileSubText, { color: t.bubbleOutMuted, textAlign: dir.start }]}>
+              {failed ? `${fmtSize(p.size)} · ${tr('chat.failed')}` : tr('chat.progress', { done: fmtSize(p.sent), total: fmtSize(p.size) })}
             </Text>
           </View>
         </View>
-        {!failed ? <Bar t={t} out frac={p.size ? p.sent / p.size : 0} /> : null}
+        {!failed ? <Bar t={t} dir={dir} out frac={p.size ? p.sent / p.size : 0} /> : null}
         {err}
         {actions}
       </View>
@@ -458,10 +478,10 @@ function PendingBubble({ t, cid, p, first }: { t: Theme; cid: string; p: Pending
 }
 
 const s = StyleSheet.create({
-  headTitle: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headTitle: { alignItems: 'center', gap: 10 },
   headName: { fontSize: 15.5, fontWeight: '600' },
   headStatus: { fontSize: 12, fontWeight: '500', marginTop: 1 },
-  banner: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 9 },
+  banner: { gap: 8, alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 9 },
   bannerText: { flex: 1, fontSize: 13, fontWeight: '500', lineHeight: 18 },
   day: { alignItems: 'center', marginTop: 16, marginBottom: 6 },
   dayText: {
@@ -473,8 +493,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
   },
-  msg: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  msgOut: { flexDirection: 'row-reverse' },
+  msg: { alignItems: 'center', gap: 4, marginTop: 3 },
   first: { marginTop: 12 },
   bubble: {
     maxWidth: '80%',
@@ -484,33 +503,30 @@ const s = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
   },
-  firstIn: { borderTopLeftRadius: 5 },
-  firstOut: { borderTopRightRadius: 5 },
   mono: { fontFamily: mono, fontSize: 13.5, lineHeight: 20 },
-  stamp: { fontSize: 10.5, textAlign: 'right', marginTop: 3 },
+  stamp: { fontSize: 10.5, marginTop: 3 },
   fileBubble: { width: 300, maxWidth: '85%', paddingTop: 10 },
-  fileCard: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  fileCard: { alignItems: 'center', gap: 11 },
   fileIcon: { width: 42, height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   fileName: { fontSize: 14.5, fontWeight: '600' },
-  fileSub: { flexDirection: 'row', marginTop: 2 },
-  fileSubText: { fontSize: 12 },
+  fileSubText: { fontSize: 12, marginTop: 2 },
   fileError: { fontSize: 12, marginTop: 4 },
   bar: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 8, marginBottom: 2 },
   fill: { height: '100%', borderRadius: 3 },
-  fileActions: { flexDirection: 'row', gap: 6, marginTop: 8 },
-  pill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 999 },
+  fileActions: { flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  pill: { alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 999 },
   pillText: { fontSize: 13, fontWeight: '600' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   emptyIcon: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { marginTop: 12, fontSize: 16, fontWeight: '600' },
   emptyText: { marginTop: 4, fontSize: 14, textAlign: 'center', lineHeight: 20, maxWidth: 300 },
   composerWrap: { paddingHorizontal: 10, paddingTop: 6 },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, padding: 5, borderRadius: 16, borderWidth: 1 },
+  composer: { alignItems: 'flex-end', gap: 2, padding: 5, borderRadius: 16, borderWidth: 1 },
   input: { flex: 1, minHeight: 38, maxHeight: 140, paddingHorizontal: 4, paddingTop: 9, paddingBottom: 9, fontFamily: mono, fontSize: 14 },
   send: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 10, paddingHorizontal: 10 },
-  sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12, borderRadius: 12 },
+  sheetRow: { alignItems: 'center', gap: 14, padding: 12, borderRadius: 12 },
   sheetIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  sheetText: { fontSize: 15.5, fontWeight: '500' },
+  sheetText: { flex: 1, fontSize: 15.5, fontWeight: '500' },
 });

@@ -1,0 +1,128 @@
+// English, the source for the other languages (they are typed against this
+// shape). {name}-style placeholders are filled in by t(); an object with
+// `other` is a plural, picked with the `count` variable. Wording follows the
+// website (dsync-site/src/i18n) so the site and the app match.
+
+/** A plural message; the categories come from Intl.PluralRules. */
+export type Plural = { zero?: string; one?: string; two?: string; few?: string; many?: string; other: string };
+
+const plural = (p: Plural): Plural => p;
+
+const en = {
+  common: {
+    back: 'Back',
+    cancel: 'Cancel',
+    settings: 'Settings',
+  },
+  list: {
+    label: 'COMPUTERS',
+    you: 'You: {text}',
+    noMessages: 'No messages yet',
+    emptyTitle: 'No computers yet',
+    emptyText: 'On your computer, open dsync → Settings → Connect a phone, then scan the code it shows.',
+    connect: 'Connect a computer',
+  },
+  scan: {
+    title: 'Connect a computer',
+    intro: 'On your computer, open dsync → Settings → Connect a phone, and point the camera at the code.',
+    permTitle: 'Camera needed to scan',
+    permText: "dsync uses the camera only to read the pairing code on your computer's screen.",
+    allow: 'Allow camera',
+    openSettings: 'Open settings',
+    orPasteBelow: 'Or paste the pairing link below.',
+    connecting: 'Connecting to {name}…',
+    trying: 'Trying {address}',
+    scanAgain: 'Scan again',
+    pasteLabel: 'OR PASTE THE PAIRING LINK',
+    paste: 'Paste',
+    connect: 'Connect',
+  },
+  chat: {
+    online: 'Online',
+    offline: 'Offline',
+    offlineSeen: 'Offline · last seen {time}',
+    notPaired: 'Not paired any more',
+    connecting: 'Connecting…',
+    bannerUnauthorized: 'This computer no longer knows this phone. Forget it in settings and connect again.',
+    bannerClock: "The phone's and the computer's clocks are more than 2 minutes apart.",
+    bannerBadReply: "The computer's replies can't be decrypted. Forget it and connect again.",
+    bannerUnreachable: "Can't reach the computer. Phone and computer must be on the same Wi-Fi, and dsync must be running.",
+    computerSettings: 'Computer settings',
+    emptyTitle: 'Nothing here yet',
+    emptyText: 'Send text, a photo or a file to {name}. Things sent from the computer show up here.',
+    copy: 'Copy',
+    attach: 'Attach',
+    placeholder: 'Message {name}',
+    pasteClipboard: 'Paste clipboard',
+    send: 'Send',
+    photoOrVideo: 'Photo or video',
+    file: 'File',
+    sending: 'Sending…',
+    receiving: 'Receiving…',
+    failed: 'Failed',
+    canceled: 'Canceled',
+    sent: 'Sent',
+    notSent: 'Not sent',
+    progress: '{done} of {total}',
+    downloading: 'Downloading…',
+    retry: 'Retry',
+    saveShare: 'Save / Share',
+    discard: 'Discard',
+  },
+  computer: {
+    title: 'Computer',
+    name: 'Name',
+    address: 'Address in use',
+    otherAddresses: plural({ one: 'Other address', other: 'Other addresses' }),
+    paired: 'Paired',
+    pairedAt: '{day}, {time}',
+    forget: 'Forget this computer',
+    note: 'Messages are kept on the computer. To use this phone with it again, show a new code on the computer (Settings → Connect a phone).',
+    confirmTitle: 'Forget {name}?',
+    confirmText: 'This phone and the computer will stop syncing. You can connect again with a new code.',
+    confirm: 'Forget',
+    unreachableTitle: "Couldn't reach the computer",
+    unreachableText: '{error}\n\nForget it on this phone anyway? The computer will keep listing this phone until you remove it there.',
+    forgetAnyway: 'Forget anyway',
+  },
+  app: {
+    title: 'Settings',
+    language: 'LANGUAGE',
+    system: 'System',
+  },
+  errors: {
+    generic: 'Something went wrong',
+    unreachable: "Can't reach the computer. Phone and computer must be on the same Wi-Fi, and dsync must be running.",
+    expired: 'This code has expired or was already used. Show a new code on the computer.',
+    unauthorized: 'This computer no longer knows this phone. Forget it here and connect again.',
+    clock: "The phone's and the computer's clocks are more than 2 minutes apart. Check the time settings.",
+    badReply: 'The computer sent a reply that could not be decrypted.',
+    notACode: "That's not a dsync pairing code. On the computer open Settings → Connect a phone.",
+    codeIncomplete: 'The pairing code is incomplete ({what}). Show a new code on the computer.',
+    codeNewer: 'This pairing code is from a newer dsync. Update the phone app.',
+    tooLong: 'Text is too long (at most 1 MB).',
+    unexpectedReply: 'The computer sent an unexpected reply.',
+    cantRead: 'Could not read the file.',
+    canceled: 'Canceled',
+    endedEarly: 'The file ended early.',
+    lostPart: 'The computer lost part of the file.',
+    stalled: 'The download stalled.',
+    noSharing: 'Sharing is not available on this phone.',
+  },
+  units: { B: 'B', KB: 'KB', MB: 'MB', GB: 'GB', TB: 'TB' },
+  dates: {
+    today: 'Today',
+    yesterday: 'Yesterday',
+    // Used only when Intl can't format dates in this language.
+    weekdays: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+    weekdaysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+    monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+    dayMonth: '{day} {month}',
+    full: '{weekday}, {day} {month}',
+    decimal: '.',
+  },
+};
+
+export default en;
+export type Dict = typeof en;

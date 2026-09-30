@@ -1,0 +1,7 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "dsync",
+    "NSCameraUsageDescription": "dsync utilise la caméra pour scanner le code d’association affiché sur votre ordinateur.",
+    "NSLocalNetworkUsageDescription": "dsync communique avec dsync sur vos ordinateurs via le réseau local."
+  }
+}

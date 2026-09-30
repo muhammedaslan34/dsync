@@ -3,18 +3,22 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, BackHandler, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useLocales } from 'expo-localization';
+import { loadLanguage, refreshSystemLanguage } from './src/i18n';
 import { loadComputers, useStore } from './src/store';
 import { useTheme } from './src/theme';
 import ComputersScreen from './src/screens/ComputersScreen';
 import ScanScreen from './src/screens/ScanScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import AppSettingsScreen from './src/screens/AppSettingsScreen';
 
 export type Route =
   | { name: 'list' }
   | { name: 'scan' }
   | { name: 'chat'; cid: string }
-  | { name: 'settings'; cid: string };
+  | { name: 'settings'; cid: string }
+  | { name: 'app' };
 
 export type Nav = {
   go: (r: Route) => void;
@@ -34,12 +38,21 @@ function parent(r: Route): Route | null {
 
 export default function App() {
   const t = useTheme();
-  const ready = useStore((s) => s.ready);
+  const computersReady = useStore((s) => s.ready);
+  const [langReady, setLangReady] = useState(false);
+  const ready = computersReady && langReady;
+  const locales = useLocales();
   const [route, setRoute] = useState<Route>({ name: 'list' });
 
   useEffect(() => {
     void loadComputers();
+    void loadLanguage().finally(() => setLangReady(true));
   }, []);
+
+  // The phone's language changed while the app was open ("System" follows it).
+  useEffect(() => {
+    refreshSystemLanguage();
+  }, [locales]);
 
   const back = useCallback(() => {
     setRoute((r) => parent(r) ?? r);
@@ -67,6 +80,8 @@ export default function App() {
     screen = <ScanScreen nav={nav} />;
   } else if (route.name === 'chat') {
     screen = <ChatScreen key={route.cid} cid={route.cid} nav={nav} />;
+  } else if (route.name === 'app') {
+    screen = <AppSettingsScreen nav={nav} />;
   } else if (route.name === 'settings') {
     screen = <SettingsScreen cid={route.cid} nav={nav} />;
   } else {
@@ -76,7 +91,8 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style={t.dark ? 'light' : 'dark'} />
-      <View style={{ flex: 1, backgroundColor: t.bg }}>{screen}</View>
+      {/* direction: 'ltr' pins Yoga: screens mirror themselves for Arabic (see src/i18n.ts). */}
+      <View style={{ flex: 1, backgroundColor: t.bg, direction: 'ltr' }}>{screen}</View>
     </SafeAreaProvider>
   );
 }

@@ -6,13 +6,14 @@ import { describeError } from '../dsync';
 import { dayLabel, fmtTime, osLabel } from '../format';
 import { EMPTY_THREAD, forgetComputer, isOnline, pollOnce, useStore } from '../store';
 import { type Theme, mono, useTheme } from '../theme';
-import { Avatar, Button, Card, Header, IconButton, useForeground, useInterval, useNow } from '../components/ui';
+import { type Direction, useDirection, useI18n } from '../i18n';
+import { Avatar, BackButton, Button, Card, Header, useForeground, useInterval, useNow } from '../components/ui';
 
-function Row({ t, label, value, monoValue, last }: { t: Theme; label: string; value: string; monoValue?: boolean; last?: boolean }) {
+function Row({ t, dir, label, value, monoValue, last }: { t: Theme; dir: Direction; label: string; value: string; monoValue?: boolean; last?: boolean }) {
   return (
     <View style={[s.row, !last && { borderBottomColor: t.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
-      <Text style={[s.rowLabel, { color: t.muted }]}>{label}</Text>
-      <Text selectable style={[s.rowValue, { color: t.text }, monoValue && { fontFamily: mono, fontSize: 13.5 }]}>
+      <Text style={[s.rowLabel, { color: t.muted, textAlign: dir.start }]}>{label}</Text>
+      <Text selectable style={[s.rowValue, { color: t.text, textAlign: dir.start }, monoValue && { fontFamily: mono, fontSize: 13.5 }]}>
         {value}
       </Text>
     </View>
@@ -21,6 +22,8 @@ function Row({ t, label, value, monoValue, last }: { t: Theme; label: string; va
 
 export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) {
   const t = useTheme();
+  const { t: tr } = useI18n();
+  const dir = useDirection();
   const insets = useSafeAreaInsets();
   const computer = useStore((s) => s.computers.find((c) => c.id === cid));
   const thread = useStore((s) => s.threads[cid] ?? EMPTY_THREAD);
@@ -43,12 +46,12 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
     } catch (e) {
       setBusy(false);
       Alert.alert(
-        "Couldn't reach the computer",
-        `${describeError(e)}\n\nForget it on this phone anyway? The computer will keep listing this phone until you remove it there.`,
+        tr('computer.unreachableTitle'),
+        tr('computer.unreachableText', { error: describeError(e) }),
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: tr('common.cancel'), style: 'cancel' },
           {
-            text: 'Forget anyway',
+            text: tr('computer.forgetAnyway'),
             style: 'destructive',
             onPress: async () => {
               await forgetComputer(cid, true);
@@ -61,39 +64,45 @@ export default function SettingsScreen({ cid, nav }: { cid: string; nav: Nav }) 
   };
 
   const confirmForget = () =>
-    Alert.alert(`Forget ${computer.name}?`, 'This phone and the computer will stop syncing. You can connect again with a new code.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Forget', style: 'destructive', onPress: () => void forget() },
+    Alert.alert(tr('computer.confirmTitle', { name: computer.name }), tr('computer.confirmText'), [
+      { text: tr('common.cancel'), style: 'cancel' },
+      { text: tr('computer.confirm'), style: 'destructive', onPress: () => void forget() },
     ]);
 
   return (
     <View style={{ flex: 1 }}>
       <Header
-        left={<IconButton icon="chevron-back" label="Back" onPress={nav.back} color={t.text} />}
-        title={<Text style={[s.headTitle, { color: t.text }]}>Computer</Text>}
+        left={<BackButton onPress={nav.back} />}
+        title={<Text style={[s.headTitle, { color: t.text, textAlign: dir.start }]}>{tr('computer.title')}</Text>}
       />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: insets.bottom + 24 }}>
         <View style={s.top}>
           <Avatar name={computer.name} id={computer.id} size={72} online={online} ringColor={t.bg} />
           <Text style={[s.name, { color: t.text }]}>{computer.name}</Text>
           <Text style={[s.sub, { color: online ? t.online : t.muted }]}>
-            {osLabel[computer.os] ?? computer.os}
-            {osLabel[computer.os] || computer.os ? ' · ' : ''}
-            {online ? 'Online' : 'Offline'}
+            {/* In Arabic the line reads from the right, starting with the system name. */}
+            {(dir.isRTL ? '\u200f' : '') +
+              [osLabel[computer.os] ?? computer.os, online ? tr('chat.online') : tr('chat.offline')].filter(Boolean).join(' · ')}
           </Text>
         </View>
 
         <Card t={t} style={{ paddingVertical: 4 }}>
-          <Row t={t} label="Name" value={computer.name} />
-          <Row t={t} label="Address in use" value={`${computer.address}:${computer.port}`} monoValue />
-          {others.length > 0 ? <Row t={t} label="Other addresses" value={others.join('\n')} monoValue /> : null}
-          <Row t={t} label="Paired" value={`${dayLabel(computer.pairedAt)}, ${fmtTime(computer.pairedAt)}`} last />
+          <Row t={t} dir={dir} label={tr('computer.name')} value={computer.name} />
+          <Row t={t} dir={dir} label={tr('computer.address')} value={`${computer.address}:${computer.port}`} monoValue />
+          {others.length > 0 ? (
+            <Row t={t} dir={dir} label={tr('computer.otherAddresses', { count: others.length })} value={others.join('\n')} monoValue />
+          ) : null}
+          <Row
+            t={t}
+            dir={dir}
+            label={tr('computer.paired')}
+            value={tr('computer.pairedAt', { day: dayLabel(computer.pairedAt), time: fmtTime(computer.pairedAt) })}
+            last
+          />
         </Card>
 
-        <Button title="Forget this computer" kind="danger" icon="trash-outline" busy={busy} onPress={confirmForget} />
-        <Text style={[s.note, { color: t.muted }]}>
-          Messages are kept on the computer. To use this phone with it again, show a new code on the computer (Settings → Connect a phone).
-        </Text>
+        <Button title={tr('computer.forget')} kind="danger" icon="trash-outline" busy={busy} onPress={confirmForget} />
+        <Text style={[s.note, { color: t.muted }]}>{tr('computer.note')}</Text>
       </ScrollView>
     </View>
   );

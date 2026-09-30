@@ -4,6 +4,7 @@ import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View, type St
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hueFor, initials } from '../format';
+import { side, useDirection, useI18n } from '../i18n';
 import { type Theme, useTheme } from '../theme';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -14,6 +15,7 @@ export function Icon({ name, size = 20, color }: { name: IconName; size?: number
 
 export function Avatar({ name, id, size = 40, online, ringColor }: { name: string; id: string; size?: number; online?: boolean | null; ringColor?: string }) {
   const t = useTheme();
+  const { isRTL } = useDirection();
   const hue = hueFor(id || name);
   const dot = Math.round(size * 0.3);
   return (
@@ -34,7 +36,7 @@ export function Avatar({ name, id, size = 40, online, ringColor }: { name: strin
         <View
           style={{
             position: 'absolute',
-            right: -1,
+            ...side(isRTL, { right: -1 }),
             bottom: -1,
             width: dot,
             height: dot,
@@ -91,6 +93,7 @@ export function Button({
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useTheme();
+  const { row } = useDirection();
   const colors: Record<BtnKind, { bg: string; fg: string; border: string }> = {
     primary: { bg: t.accent, fg: t.accentText, border: t.accent },
     secondary: { bg: t.raised, fg: t.text, border: t.borderStrong },
@@ -105,12 +108,14 @@ export function Button({
       disabled={off}
       style={({ pressed }) => [
         styles.btn,
-        { backgroundColor: c.bg, borderColor: c.border, opacity: off ? 0.5 : pressed ? 0.8 : 1 },
+        { flexDirection: row, backgroundColor: c.bg, borderColor: c.border, opacity: off ? 0.5 : pressed ? 0.8 : 1 },
         style,
       ]}
     >
       {busy ? <ActivityIndicator size="small" color={c.fg} /> : icon ? <Ionicons name={icon} size={18} color={c.fg} /> : null}
-      <Text style={[styles.btnText, { color: c.fg }]}>{title}</Text>
+      <Text style={[styles.btnText, { color: c.fg }]} numberOfLines={2}>
+        {title}
+      </Text>
     </Pressable>
   );
 }
@@ -148,14 +153,23 @@ export function IconButton({
 
 export function Header({ left, title, right }: { left?: ReactNode; title: ReactNode; right?: ReactNode }) {
   const t = useTheme();
+  const { row } = useDirection();
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: t.panel, borderBottomColor: t.border }]}>
+    <View style={[styles.header, { flexDirection: row, paddingTop: insets.top + 8, backgroundColor: t.panel, borderBottomColor: t.border }]}>
       {left}
       <View style={{ flex: 1, minWidth: 0 }}>{title}</View>
       {right}
     </View>
   );
+}
+
+/** The header's back button; its chevron points towards the start of the line. */
+export function BackButton({ onPress }: { onPress: () => void }) {
+  const t = useTheme();
+  const { t: tr } = useI18n();
+  const { backIcon } = useDirection();
+  return <IconButton icon={backIcon} label={tr('common.back')} onPress={onPress} color={t.text} />;
 }
 
 export function Card({ children, style, t }: { children: ReactNode; style?: StyleProp<ViewStyle>; t: Theme }) {
@@ -208,7 +222,6 @@ export function useInterval(fn: () => Promise<unknown> | void, ms: number, enabl
 
 export const styles = StyleSheet.create({
   btn: {
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
@@ -217,10 +230,9 @@ export const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
-  btnText: { fontSize: 15, fontWeight: '600' },
+  btnText: { fontSize: 15, fontWeight: '600', flexShrink: 1, textAlign: 'center' },
   iconBtn: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   header: {
-    flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 10,
