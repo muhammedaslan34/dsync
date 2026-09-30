@@ -6,6 +6,7 @@
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version,
+    FirewallStatus, FixFirewall, MakeNetworkPrivate,
   } from '../wailsjs/go/main/App'
   import { EventsOn, ClipboardSetText, OnFileDrop } from '../wailsjs/runtime/runtime'
   import Icon from './lib/Icon.svelte'
@@ -43,6 +44,9 @@
   let bg = $state({})
   let hostInfo = $state({})
   let version = $state('')
+  let firewall = $state({ supported: false })
+  // Other computers are probably blocked by Windows Firewall.
+  let firewallProblem = $derived(firewall.supported && !firewall.error && (!firewall.ruleOk || firewall.publicNetworks?.length > 0))
   let control = $state(null) // { peer, state } while setting up remote control
   let controlPins = $state([]) // PIN requests shown on this (controlled) computer
   let theme = $state(loadTheme())
@@ -147,6 +151,7 @@
       }
     })
     window.addEventListener('paste', onPaste)
+    refreshFirewall()
 
     if (!selectedId && devices.length) select(devices[0].id)
   })
@@ -254,6 +259,7 @@
     dialog = name
     if (name === 'settings') {
       Version().then((v) => (version = v))
+      refreshFirewall()
       Background().then((b) => (bg = b))
       HostInfo().then((h) => (hostInfo = h))
     }
@@ -343,6 +349,19 @@
     }
   }
 
+  async function refreshFirewall() {
+    try { firewall = await FirewallStatus() } catch {}
+  }
+
+  // fixFirewall runs a fix that shows the Windows admin prompt.
+  async function fixFirewall(fix, done) {
+    await run(async () => {
+      await fix()
+      showToast(done)
+    })
+    await refreshFirewall()
+  }
+
   function preview(m) {
     if (!m) return null
     const text = m.file ? (m.file.folder ? `📁 ${m.file.name}` : m.file.name) : m.text.split('\n')[0]
@@ -366,6 +385,16 @@
       </span>
       <span class="chip">This PC</span>
     </button>
+
+    {#if firewallProblem}
+      <button class="fw-warning" onclick={() => openDialog('settings')}>
+        <Icon name="shield" size={16} />
+        <span>
+          <b>Windows Firewall is blocking dsync</b>
+          <span class="small">Other computers can't reach this PC. Click to fix.</span>
+        </span>
+      </button>
+    {/if}
 
     <div class="list-head">
       <span class="label">Devices <span class="count">{devices.length}</span></span>
@@ -593,6 +622,9 @@
     {bg}
     {hostInfo}
     {version}
+    {firewall}
+    onFixFirewall={() => fixFirewall(FixFirewall, 'dsync is now allowed through Windows Firewall')}
+    onMakePrivate={() => fixFirewall(MakeNetworkPrivate, 'Your network is now set to Private')}
     onSunshineLogin={async (user, pw) => {
       await SetSunshineLogin(user, pw)
       hostInfo = await HostInfo()

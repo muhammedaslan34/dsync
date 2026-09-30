@@ -43,6 +43,24 @@ export namespace main {
 	        this.appMenu = source["appMenu"];
 	    }
 	}
+	export class FirewallStatus {
+	    supported: boolean;
+	    ruleOk: boolean;
+	    publicNetworks: string[];
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FirewallStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.supported = source["supported"];
+	        this.ruleOk = source["ruleOk"];
+	        this.publicNetworks = source["publicNetworks"];
+	        this.error = source["error"];
+	    }
+	}
 
 }
 

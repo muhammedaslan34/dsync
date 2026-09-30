@@ -6,6 +6,7 @@
   let {
     self, receiveDir, localAddrs, theme, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
+    firewall, onFixFirewall, onMakePrivate,
     onClose, onRename, onChangeDir, onOpenDir, onCopy, onTheme,
   } = $props()
 
@@ -75,6 +76,35 @@
         {/each}
       </div>
     </section>
+
+    {#if firewall?.supported}
+      <section class="setting">
+        <div class="setting-title">Windows Firewall</div>
+        {#if firewall.error}
+          <p class="muted small">{firewall.error}</p>
+        {:else}
+          <div class="fw-row">
+            <span class="rc-dot" class:ok={firewall.ruleOk} class:bad={!firewall.ruleOk}></span>
+            <span class="fw-text">
+              {#if firewall.ruleOk}dsync is allowed through the firewall.{:else}dsync isn't allowed through the firewall, so other computers can't reach this PC.{/if}
+            </span>
+            {#if !firewall.ruleOk}<button class="btn primary sm" onclick={onFixFirewall}>Allow</button>{/if}
+          </div>
+          <div class="fw-row">
+            <span class="rc-dot" class:ok={!firewall.publicNetworks?.length} class:bad={firewall.publicNetworks?.length}></span>
+            <span class="fw-text">
+              {#if firewall.publicNetworks?.length}
+                Your network "{firewall.publicNetworks.join('", "')}" is set to Public, where Windows blocks dsync. Make it Private if it's your home or work network.
+              {:else}
+                Your network is Private, so your other computers can connect.
+              {/if}
+            </span>
+            {#if firewall.publicNetworks?.length}<button class="btn primary sm" onclick={onMakePrivate}>Make private</button>{/if}
+          </div>
+          <p class="muted small fw-note">Windows asks for permission when you click a button. No command line or sudo needed.</p>
+        {/if}
+      </section>
+    {/if}
 
     <section class="setting">
       <div class="setting-title">Clipboard</div>

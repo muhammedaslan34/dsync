@@ -25,6 +25,10 @@ export function FindOnNetwork():Promise<Array<node.Peer>>;
 
 export function Fingerprint():Promise<string>;
 
+export function FirewallStatus():Promise<main.FirewallStatus>;
+
+export function FixFirewall():Promise<void>;
+
 export function ForgetPeer(arg1:string):Promise<void>;
 
 export function History():Promise<Array<node.Message>>;
@@ -32,6 +36,8 @@ export function History():Promise<Array<node.Message>>;
 export function HostInfo():Promise<node.HostInfo>;
 
 export function LocalAddrs():Promise<Array<discovery.LocalAddr>>;
+
+export function MakeNetworkPrivate():Promise<void>;
 
 export function OpenPath(arg1:string):Promise<void>;
 

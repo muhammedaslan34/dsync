@@ -23,7 +23,7 @@ ManifestDPIAware true
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "This will install dsync ${INFO_PRODUCTVERSION}, which sends text, files and the clipboard between your computers.$\r$\n$\r$\nIt also lets dsync through Windows Firewall on private networks, so your other computers can reach this one."
+!define MUI_WELCOMEPAGE_TEXT "This will install dsync ${INFO_PRODUCTVERSION}, which sends text, files and the clipboard between your computers.$\r$\n$\r$\nIt also lets dsync through Windows Firewall on your home and work networks, so your other computers can reach this one. Nothing else needs to be set up."
 ; Start dsync from the finish page as the normal user, not as the admin the
 ; installer runs as.
 !define MUI_FINISHPAGE_RUN
@@ -60,7 +60,24 @@ FunctionEnd
 !macroend
 
 !macro RemoveFirewallRules
-    nsExec::Exec 'netsh advfirewall firewall delete rule name="dsync"'
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="dsync"'
+!macroend
+
+; Windows only applies "private" rules on networks marked Private, and it
+; marks many home networks Public. Offer to fix that, since otherwise the
+; other computers still can't reach dsync.
+!macro OfferPrivateNetwork
+    nsExec::ExecToStack `powershell -NoProfile -NonInteractive -Command "(Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public' | Measure-Object).Count"`
+    Pop $0 ; exit code
+    Pop $1 ; number of Public networks
+    IntOp $1 $1 + 0
+    ${If} $0 == 0
+    ${AndIf} $1 > 0
+        MessageBox MB_YESNO|MB_ICONQUESTION "Windows has your current network set to Public, so it blocks your other computers from reaching dsync.$\r$\n$\r$\nSet it to Private? Choose Yes on your home or work network, No on public Wi-Fi (like a café).$\r$\n$\r$\nYou can change this later in dsync's settings." /SD IDNO IDNO skip_private
+        DetailPrint "Setting the current network to Private"
+        nsExec::ExecToLog `powershell -NoProfile -NonInteractive -Command "Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public' | Set-NetConnectionProfile -NetworkCategory Private"`
+        skip_private:
+    ${EndIf}
 !macroend
 
 Section
@@ -73,11 +90,13 @@ Section
     ; The command-line tool (dsync send, dsync control, ...).
     File "/oname=dsync.exe" "..\..\..\dist\windows\dsync.exe"
 
-    ; Let dsync through the firewall on private networks: discovery (UDP)
-    ; and transfers (TCP), for the app and for `dsync serve`.
+    ; Let dsync through the firewall on private and domain networks:
+    ; discovery (UDP) and transfers (TCP), for the app and `dsync serve`.
+    DetailPrint "Allowing dsync through Windows Firewall"
     !insertmacro RemoveFirewallRules
-    nsExec::Exec 'netsh advfirewall firewall add rule name="dsync" dir=in action=allow program="$INSTDIR\${PRODUCT_EXECUTABLE}" profile=private enable=yes'
-    nsExec::Exec 'netsh advfirewall firewall add rule name="dsync" dir=in action=allow program="$INSTDIR\dsync.exe" profile=private enable=yes'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="dsync" dir=in action=allow program="$INSTDIR\${PRODUCT_EXECUTABLE}" profile=private,domain enable=yes'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="dsync" dir=in action=allow program="$INSTDIR\dsync.exe" profile=private,domain enable=yes'
+    !insertmacro OfferPrivateNetwork
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

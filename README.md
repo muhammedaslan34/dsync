@@ -9,7 +9,11 @@ Download the file for your system from `dist/release` (see *Packaging* below):
 - **Windows:** run `dsync-setup-VERSION-windows-amd64.exe`. It installs dsync (the app
   and the `dsync.exe` command-line tool) to Program Files, adds Start menu and desktop
   shortcuts, installs Microsoft WebView2 if missing, and lets dsync through Windows
-  Firewall on private networks. Uninstall it from *Settings → Apps*; your settings and
+  Firewall on home and work networks. Nothing needs to be run by hand (there is no `sudo`
+  on Windows). If Windows has your network set to *Public*, the installer offers to make it
+  *Private*, since Windows blocks dsync on public networks. If other computers still can't
+  reach the PC, open dsync's *Settings → Windows Firewall* and click the fix buttons;
+  Windows asks for permission. Uninstall it from *Settings → Apps*; your settings and
   pairings in `%AppData%\dsync` are kept.
 - **Arch Linux / CachyOS:** `sudo pacman -U dsync-VERSION-1-x86_64.pkg.tar.zst`, then
   `sudo ufw allow dsync` (or `sudo firewall-cmd --permanent --add-service=dsync`).

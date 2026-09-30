@@ -42,6 +42,14 @@ export function Fingerprint() {
   return window['go']['main']['App']['Fingerprint']();
 }
 
+export function FirewallStatus() {
+  return window['go']['main']['App']['FirewallStatus']();
+}
+
+export function FixFirewall() {
+  return window['go']['main']['App']['FixFirewall']();
+}
+
 export function ForgetPeer(arg1) {
   return window['go']['main']['App']['ForgetPeer'](arg1);
 }
@@ -56,6 +64,10 @@ export function HostInfo() {
 
 export function LocalAddrs() {
   return window['go']['main']['App']['LocalAddrs']();
+}
+
+export function MakeNetworkPrivate() {
+  return window['go']['main']['App']['MakeNetworkPrivate']();
 }
 
 export function OpenPath(arg1) {

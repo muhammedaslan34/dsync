@@ -273,3 +273,14 @@ func (a *App) OpenURL(url string) { wruntime.BrowserOpenURL(a.ctx, url) }
 
 // Version is the dsync version, shown in the settings.
 func (a *App) Version() string { return version.Version }
+
+// FirewallStatus says whether Windows Firewall lets other computers reach
+// dsync.
+func (a *App) FirewallStatus() FirewallStatus { return firewallStatus() }
+
+// FixFirewall allows dsync through Windows Firewall (with the admin prompt).
+func (a *App) FixFirewall() error { return fixFirewall() }
+
+// MakeNetworkPrivate sets the connected Public networks to Private (with the
+// admin prompt), so the firewall rules apply.
+func (a *App) MakeNetworkPrivate() error { return makeNetworkPrivate() }

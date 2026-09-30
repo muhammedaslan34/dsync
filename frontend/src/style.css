@@ -920,3 +920,25 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .pair-code.with-copy { position: relative; }
 .pair-code.with-copy .icon-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
 .version { margin: 14px 0 0; text-align: center; }
+
+/* ---------- Windows Firewall ---------- */
+.fw-warning {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 10px 10px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #e5a100 14%, var(--raised));
+  border: 1px solid color-mix(in srgb, #e5a100 45%, transparent);
+  text-align: left;
+  color: var(--text);
+}
+.fw-warning .ic { color: #c98a00; margin-top: 1px; }
+.fw-warning > span { display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
+.fw-warning .small { color: var(--text-2); }
+.fw-warning:hover { border-color: #e5a100; }
+.fw-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; color: var(--text-2); }
+.fw-text { flex: 1; }
+.fw-note { margin: 8px 0 0; }
+.rc-dot.bad { background: var(--danger); }
