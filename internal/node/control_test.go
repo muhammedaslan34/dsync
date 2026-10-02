@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -59,7 +61,8 @@ echo "$@" >> "` + f.dir + `/calls"
 case "$1" in
   list) [ -f "` + paired + `" ] && { echo Desktop; exit 0; }
         echo "Computer $2 has not been paired. Please open Moonlight to pair before retrieving games list." >&2; exit 255 ;;
-  pair) echo "$4" > "` + f.dir + `/pairpin"
+  pair) echo "$$" > "` + f.dir + `/pairpid"
+        echo "$4" > "` + f.dir + `/pairpin"
         for i in $(seq 1 100); do [ -f "` + paired + `" ] && exit 0; sleep 0.1; done; exit 1 ;;
 esac
 exit 0
@@ -157,6 +160,20 @@ func (f *controlFakes) waitCall(t *testing.T, want string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Errorf("moonlight calls:\n%s\nwant %q", f.calls(), want)
+}
+
+func (f *controlFakes) waitPairPID(t *testing.T) int {
+	t.Helper()
+	for range 250 {
+		if data, err := os.ReadFile(filepath.Join(f.dir, "pairpid")); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+				return pid
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("fake Moonlight pairing process did not publish its PID")
+	return 0
 }
 
 // sunshineUp pretends Sunshine is running here by listening where
@@ -440,10 +457,21 @@ func TestStartControlReportsDeclinedPIN(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished := make(chan ControlState, 1)
+	pairProcesses := make(chan *os.Process, 1)
+	pairExit := make(chan error, 1)
+	requests := make(chan ControlPIN, 1)
 	a.emit = func(event string, data any) {
 		if event == EventControl {
 			st := data.(ControlState)
 			if st.Step == "done" || st.Step == "error" || st.Step == "canceled" {
+				// Probe inside the callback, before delivering the terminal
+				// event to the test, so later cleanup cannot satisfy it.
+				select {
+				case process := <-pairProcesses:
+					pairExit <- process.Signal(syscall.Signal(0))
+				default:
+					pairExit <- fmt.Errorf("pairing ended before its process was observed")
+				}
 				finished <- st
 			}
 		}
@@ -451,7 +479,7 @@ func TestStartControlReportsDeclinedPIN(t *testing.T) {
 	b.emit = func(event string, data any) {
 		if event == EventControlPIN {
 			if req := data.(ControlPIN); req.Automatic {
-				b.AnswerControlPIN(req.ID, false)
+				requests <- req
 			}
 		}
 	}
@@ -459,6 +487,25 @@ func TestStartControlReportsDeclinedPIN(t *testing.T) {
 	if err := a.StartControl(t.Context(), b.cfg.ID, ControlOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	var request ControlPIN
+	select {
+	case request = <-requests:
+	case <-time.After(3 * time.Second):
+		t.Fatal("StartControl did not ask for PIN consent")
+	}
+	process, err := os.FindProcess(f.waitPairPID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		process.Kill()
+		process.Release()
+	})
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("fake pairing process was not running before decline: %v", err)
+	}
+	pairProcesses <- process
+	b.AnswerControlPIN(request.ID, false)
 	select {
 	case st := <-finished:
 		if st.Step != "error" || st.Code != "pair-declined" || !strings.Contains(st.Message, "declined") {
@@ -466,6 +513,9 @@ func TestStartControlReportsDeclinedPIN(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("StartControl kept waiting after the PIN was declined")
+	}
+	if err := <-pairExit; !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("pairing process was still running when its terminal event arrived: %v", err)
 	}
 	if strings.Contains(f.calls(), "stream ") {
 		t.Fatal("started streaming after the PIN was declined")
