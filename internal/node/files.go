@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"dsync/internal/client"
 	"dsync/internal/config"
@@ -52,19 +53,32 @@ var (
 	errCanceledByUser = errors.New("canceled")
 	errChecksum       = errors.New("checksum mismatch, file is corrupted")
 	errInterrupted    = errors.New("interrupted; it resumes when sent again")
+	errByteCount      = errors.New("received byte count does not match declared size")
 	errSuperseded     = errors.New("replaced by a newer attempt")
 )
 
 const (
-	// Partial downloads older than this are deleted at startup.
+	// Partial downloads older than this are deleted while the node runs.
 	partMaxAge = 7 * 24 * time.Hour
 	// readIdleTimeout ends an incoming transfer when no data arrives for
 	// this long, e.g. after the sender's Wi-Fi drops without closing.
 	readIdleTimeout = 60 * time.Second
 	// diskReserve is left free when checking space for an incoming file.
 	diskReserve = 64 << 20
-	partPrefix  = ".dsync-"
-	partSuffix  = ".part"
+	// Do not let one peer accumulate an unbounded number of abandoned
+	// resumable transfers. Existing transfers can always be resumed, even
+	// after reaching this limit.
+	maxPeerPartialFiles = 64
+	maxPeerPartialBytes = 1 << 30
+	partCleanupInterval = time.Hour
+	partPrefix          = ".dsync-"
+	partSuffix          = ".part"
+	partMetaSuffix      = ".meta"
+)
+
+var (
+	errPartQuota    = errors.New("partial transfer quota exceeded")
+	errPartConflict = errors.New("partial transfer metadata changed")
 )
 
 // retryDelays are the waits between attempts when a connection drops while
@@ -248,13 +262,40 @@ func (n *Node) transmit(ctx context.Context, peer Peer, fp string, id int64, pat
 // handleFileOffset tells a sender how much of a transfer we already have.
 func (n *Node) handleFileOffset(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
 	var req proto.OffsetRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || !validTransferID(req.TransferID) {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Size < 0 || !validTransferID(req.TransferID) {
 		http.Error(w, "bad offset request", http.StatusBadRequest)
 		return
 	}
+	meta := incomingMeta{transferID: req.TransferID, name: req.Name, size: req.Size, sizeKnown: true, memberSize: req.Size, probe: true}
+	var existingFolder Message
+	var haveExistingFolder bool
 	if req.FolderID != "" {
-		if m, ok := n.findFolder(from.ID, req.FolderID); ok {
+		meta.folderID, meta.name, meta.relPath = req.FolderID, folderRootName(req.RelPath), req.RelPath
+		meta.size, meta.files = req.FolderSize, req.FolderFiles
+		meta.sizeKnown, meta.filesKnown = req.FolderFiles > 0, req.FolderFiles > 0
+		existingFolder, haveExistingFolder = n.findFolder(from.ID, req.FolderID)
+		if haveExistingFolder {
+			meta.baseFiles, meta.baseBytes = existingFolder.File.DoneFiles, existingFolder.File.DoneBytes
+			if dest, err := folderDest(existingFolder.File.Path, req.RelPath); err == nil {
+				if st, err := os.Stat(dest); err == nil && st.Mode().IsRegular() && st.Size() == req.Size {
+					meta.memberDone = true
+				}
+			}
+		}
+	}
+	if !n.authorizeIncoming(w, from, meta) {
+		return
+	}
+	clearApproval := true
+	defer func() {
+		if clearApproval {
+			n.completeIncomingApproval(from.ID, meta)
+		}
+	}()
+	if req.FolderID != "" {
+		if m, ok := existingFolder, haveExistingFolder; ok {
 			if m.File.Status == StatusCanceled && m.File.Run == req.FolderRun {
+				n.completeIncomingApproval(from.ID, meta)
 				http.Error(w, errFolderCanceled.Error(), http.StatusForbidden)
 				return
 			}
@@ -262,6 +303,7 @@ func (n *Node) handleFileOffset(w http.ResponseWriter, r *http.Request, from con
 			if dest, err := folderDest(m.File.Path, req.RelPath); err == nil {
 				if st, err := os.Stat(dest); err == nil && st.Mode().IsRegular() && st.Size() == req.Size {
 					w.Header().Set("Content-Type", "application/json")
+					clearApproval = false
 					json.NewEncoder(w).Encode(proto.OffsetResponse{Offset: req.Size, Complete: true})
 					return
 				}
@@ -270,23 +312,29 @@ func (n *Node) handleFileOffset(w http.ResponseWriter, r *http.Request, from con
 	}
 
 	var off int64
-	part := n.partPath(from.ID, req.TransferID)
+	part := n.preparePeerPartPath(from.ID, req.TransferID)
+	if bound, ok := readPartMeta(part); ok && bound.Size != req.Size {
+		http.Error(w, errPartConflict.Error(), http.StatusConflict)
+		return
+	}
 	if st, err := os.Stat(part); err == nil {
 		if st.Size() <= req.Size {
 			off = st.Size()
 		} else {
 			os.Remove(part) // not the same file after all
+			os.Remove(partMetaPath(part))
 		}
 	}
 	// Refuse up front rather than failing when the disk fills up.
 	dir := n.ReceiveDir()
 	os.MkdirAll(dir, 0o755)
-	if free, err := freeSpace(dir); err == nil && free < req.Size-off+diskReserve {
+	if free, ok := n.hasReceiveSpace(dir, req.Size-off); !ok {
 		http.Error(w, fmt.Sprintf("not enough disk space on %s (needs %s, %s free)",
 			n.Self().Name, humanSize(req.Size-off), humanSize(free)), http.StatusInsufficientStorage)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	clearApproval = false
 	json.NewEncoder(w).Encode(proto.OffsetResponse{Offset: off})
 }
 
@@ -302,6 +350,31 @@ func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request, from config.T
 		http.Error(w, "missing or bad file headers", http.StatusBadRequest)
 		return
 	}
+	meta := incomingMeta{transferID: tid, name: rawName, size: size, sizeKnown: true, memberSize: size}
+	if fid := r.Header.Get(proto.HeaderFolderID); fid != "" {
+		rel, _ := url.QueryUnescape(r.Header.Get(proto.HeaderRelPath))
+		folderSizeText, folderFilesText := r.Header.Get(proto.HeaderFolderSize), r.Header.Get(proto.HeaderFolderFiles)
+		meta.folderID, meta.name, meta.relPath = fid, folderRootName(rel), rel
+		meta.size, err = strconv.ParseInt(folderSizeText, 10, 64)
+		meta.files, oerr = strconv.Atoi(folderFilesText)
+		if err != nil || oerr != nil || meta.size < 0 || meta.files <= 0 {
+			http.Error(w, "missing or bad folder headers", http.StatusBadRequest)
+			return
+		}
+		meta.sizeKnown, meta.filesKnown = true, true
+		if existing, ok := n.findFolder(from.ID, fid); ok {
+			meta.baseFiles, meta.baseBytes = existing.File.DoneFiles, existing.File.DoneBytes
+		}
+	}
+	if !n.authorizeIncoming(w, from, meta) {
+		return
+	}
+	clearApproval := true
+	defer func() {
+		if clearApproval {
+			n.completeIncomingApproval(from.ID, meta)
+		}
+	}()
 	// The id comes from the pinned key, never from the headers.
 	fromName = n.learnPeer(from, fromName, fromPort, r.RemoteAddr)
 
@@ -310,9 +383,19 @@ func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request, from config.T
 		http.Error(w, "cannot create download folder", http.StatusInternalServerError)
 		return
 	}
-	part := n.partPath(from.ID, tid)
-	pctx, release := n.claimPart(r.Context(), part, http.NewResponseController(w))
+	part := n.preparePeerPartPath(from.ID, tid)
+	pctx, release := n.claimPart(r.Context(), from.ID, part, http.NewResponseController(w))
 	defer release()
+	releaseReservation, err := n.reservePeerPart(from.ID, part, size, offset)
+	if err != nil {
+		code := http.StatusInsufficientStorage
+		if errors.Is(err, errPartConflict) {
+			code = http.StatusConflict
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	defer releaseReservation()
 	f, err := os.OpenFile(part, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		http.Error(w, "cannot create file", http.StatusInternalServerError)
@@ -377,10 +460,17 @@ func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request, from config.T
 		// Keep what arrived so the sender can resume, unless the data is
 		// bad or the user stopped it here.
 		userCanceled := errors.Is(context.Cause(ctx), errCanceledByUser)
-		if errors.Is(err, errChecksum) || userCanceled {
+		if errors.Is(err, errChecksum) || errors.Is(err, errByteCount) || userCanceled {
 			os.Remove(part)
+			os.Remove(partMetaPath(part))
 		}
 		n.finishTransfer(ctx, id, "", err)
+		if errors.Is(err, errInterrupted) && !userCanceled {
+			clearApproval = false
+		}
+		if errors.Is(context.Cause(ctx), errSuperseded) {
+			clearApproval = false
+		}
 		if userCanceled {
 			http.Error(w, errFolderCanceled.Error(), http.StatusForbidden)
 		} else {
@@ -390,9 +480,11 @@ func (n *Node) receiveFile(w http.ResponseWriter, r *http.Request, from config.T
 	}
 	if inFolder {
 		n.folderFileDone(id, size)
+		clearApproval = n.fileInfo(id).Status == StatusDone
 	} else {
 		n.finishTransfer(ctx, id, final, nil)
 	}
+	os.Remove(partMetaPath(part))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -422,8 +514,9 @@ func (n *Node) folderReporter(id, size int64) func(int64) {
 }
 
 type partClaim struct {
-	stop func()
-	done chan struct{}
+	peerID string
+	stop   func()
+	done   chan struct{}
 }
 
 // claimPart gives one request at a time the right to write a partial file.
@@ -431,9 +524,10 @@ type partClaim struct {
 // same part means the old connection is dead even if we haven't noticed:
 // the old request is stopped (its blocked read is woken up) and we wait for
 // it to finish before going on. release must be called when done.
-func (n *Node) claimPart(ctx context.Context, part string, rc *http.ResponseController) (context.Context, func()) {
+func (n *Node) claimPart(ctx context.Context, peerID, part string, rc *http.ResponseController) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	c := &partClaim{
+		peerID: peerID,
 		stop: func() {
 			cancel(errSuperseded)
 			rc.SetReadDeadline(time.Now())
@@ -510,9 +604,23 @@ func writeIncoming(ctx context.Context, r *http.Request, rc *http.ResponseContro
 	}
 	cw := &countingWriter{w: io.MultiWriter(f, h), n: offset, progress: progress}
 	rd := &ctxReader{ctx: ctx, r: r.Body, rc: rc}
-	_, err := io.CopyBuffer(cw, rd, make([]byte, 1<<20))
+	remaining := size - offset
+	// Copy at most the declared remainder. Then consume one probe byte so an
+	// oversized chunked body is rejected without ever writing past size.
+	_, err := io.CopyBuffer(cw, io.LimitReader(rd, remaining), make([]byte, 1<<20))
 	if err != nil && err == rd.err {
 		err = errInterrupted // the sender went away; disk errors are reported as they are
+	}
+	if err == nil && cw.n == size {
+		if n, probeErr := io.CopyN(io.Discard, rd, 1); n != 0 {
+			err = fmt.Errorf("expected %d bytes, got more: %w", size, errByteCount)
+		} else if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+			if probeErr == rd.err {
+				err = errInterrupted
+			} else {
+				err = probeErr
+			}
+		}
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -521,7 +629,7 @@ func writeIncoming(ctx context.Context, r *http.Request, rc *http.ResponseContro
 		return "", err
 	}
 	if cw.n != size {
-		return "", fmt.Errorf("expected %d bytes, got %d", size, cw.n)
+		return "", fmt.Errorf("expected %d bytes, got %d: %w", size, cw.n, errByteCount)
 	}
 	if want := r.Trailer.Get(proto.TrailerSHA256); want == "" || want != hex.EncodeToString(h.Sum(nil)) {
 		return "", errChecksum
@@ -541,6 +649,75 @@ func writeIncoming(ctx context.Context, r *http.Request, rc *http.ResponseContro
 func (n *Node) partPath(peerID, tid string) string {
 	sum := sha256.Sum256([]byte(peerID + "/" + tid))
 	return filepath.Join(n.ReceiveDir(), partPrefix+hex.EncodeToString(sum[:12])+partSuffix)
+}
+
+// peerPartPath includes a hash of the peer id separately, which lets quotas
+// account for every computer-to-computer partial (including folder members)
+// without revealing the id in the filename. partPath is the pre-quota format
+// and remains in use by phone uploads.
+func (n *Node) peerPartPath(peerID, tid string) string {
+	peer := sha256.Sum256([]byte(peerID))
+	transfer := sha256.Sum256([]byte(peerID + "/" + tid))
+	name := partPrefix + hex.EncodeToString(peer[:8]) + "-" + hex.EncodeToString(transfer[:12]) + partSuffix
+	return filepath.Join(n.ReceiveDir(), name)
+}
+
+// preparePeerPartPath transparently adopts a partial made by an older dsync
+// version, preserving resumability across the filename format change.
+func (n *Node) preparePeerPartPath(peerID, tid string) string {
+	part := n.peerPartPath(peerID, tid)
+	if _, err := os.Stat(part); err == nil {
+		return part
+	}
+	legacy := n.partPath(peerID, tid)
+	if err := os.Rename(legacy, part); err == nil {
+		return part
+	}
+	return part
+}
+
+type partMeta struct {
+	Size int64 `json:"size"`
+}
+
+type partReservation struct {
+	peerID    string
+	remaining int64
+}
+
+func partMetaPath(part string) string { return part + partMetaSuffix }
+
+func readPartMeta(part string) (partMeta, bool) {
+	b, err := os.ReadFile(partMetaPath(part))
+	if err != nil {
+		return partMeta{}, false
+	}
+	var m partMeta
+	if json.Unmarshal(b, &m) != nil || m.Size < 0 {
+		return partMeta{}, false
+	}
+	return m, true
+}
+
+func writePartMeta(part string, size int64) error {
+	path := partMetaPath(part)
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".dsync-meta-")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err = f.Chmod(0o600); err == nil {
+		err = json.NewEncoder(f).Encode(partMeta{Size: size})
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func validTransferID(tid string) bool {
@@ -564,6 +741,117 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// hasReceiveSpace checks without integer overflow whether needed bytes can be
+// written while preserving diskReserve. Failure to query the filesystem is
+// left to the subsequent write, as before.
+func (n *Node) hasReceiveSpace(dir string, needed int64) (free int64, ok bool) {
+	free, err := n.freeSpace(dir)
+	if err != nil {
+		return 0, true
+	}
+	return free, free >= diskReserve && needed <= free-diskReserve
+}
+
+// reservePeerPart binds a part to its original declared size and atomically
+// reserves both the peer quota and currently available disk space. The small
+// sidecar makes the binding survive a restart. Legacy parts are bound on their
+// first resumed request, preserving compatibility without allowing later size
+// inflation.
+func (n *Node) reservePeerPart(peerID, part string, declaredSize, offset int64) (func(), error) {
+	if declaredSize < 0 || offset < 0 || offset > declaredSize {
+		return nil, errPartConflict
+	}
+	dir := filepath.Dir(part)
+	free, freeErr := n.freeSpace(dir)
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if bound, ok := readPartMeta(part); ok && bound.Size != declaredSize {
+		return nil, errPartConflict
+	}
+
+	peer := sha256.Sum256([]byte(peerID))
+	prefix := partPrefix + hex.EncodeToString(peer[:8]) + "-"
+	entries, _ := os.ReadDir(dir)
+	accounted := make(map[string]bool)
+	var files int64
+	var bytes int64
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) || !strings.HasSuffix(entry.Name(), partSuffix) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		accounted[path] = true
+		files++
+		amount := int64(0)
+		if path == part {
+			amount = declaredSize
+		} else if bound, ok := readPartMeta(path); ok {
+			amount = bound.Size
+		} else if st, err := entry.Info(); err == nil {
+			amount = st.Size()
+		}
+		if amount > maxPeerPartialBytes-bytes {
+			return nil, errPartQuota
+		}
+		bytes += amount
+	}
+	// A reservation may precede creation of its part, so include it exactly
+	// once in the same locked admission decision.
+	for path, reservation := range n.partReservations {
+		if reservation.peerID != peerID || accounted[path] {
+			continue
+		}
+		files++
+		bound, ok := readPartMeta(path)
+		if !ok || bound.Size > maxPeerPartialBytes-bytes {
+			return nil, errPartQuota
+		}
+		bytes += bound.Size
+	}
+	if !accounted[part] {
+		files++
+		if declaredSize > maxPeerPartialBytes-bytes {
+			return nil, errPartQuota
+		}
+		bytes += declaredSize
+	}
+	if files > maxPeerPartialFiles || bytes > maxPeerPartialBytes {
+		return nil, errPartQuota
+	}
+
+	remaining := declaredSize - offset
+	if freeErr == nil {
+		if free < diskReserve {
+			return nil, fmt.Errorf("%w: not enough disk space", errPartQuota)
+		}
+		reserved := int64(0)
+		for path, reservation := range n.partReservations {
+			if path == part {
+				continue
+			}
+			if reservation.remaining > free-diskReserve-reserved {
+				return nil, fmt.Errorf("%w: not enough disk space", errPartQuota)
+			}
+			reserved += reservation.remaining
+		}
+		if remaining > free-diskReserve-reserved {
+			return nil, fmt.Errorf("%w: not enough disk space", errPartQuota)
+		}
+	}
+	if _, ok := readPartMeta(part); !ok {
+		if err := writePartMeta(part, declaredSize); err != nil {
+			return nil, err
+		}
+	}
+	n.partReservations[part] = partReservation{peerID: peerID, remaining: remaining}
+	return func() {
+		n.mu.Lock()
+		delete(n.partReservations, part)
+		n.mu.Unlock()
+	}, nil
+}
+
 // cleanParts deletes partial downloads nobody resumed.
 func (n *Node) cleanParts() {
 	dir := n.ReceiveDir()
@@ -574,7 +862,27 @@ func (n *Node) cleanParts() {
 			continue
 		}
 		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > partMaxAge {
-			os.Remove(filepath.Join(dir, name))
+			path := filepath.Join(dir, name)
+			n.mu.Lock()
+			if n.parts[path] == nil {
+				os.Remove(path)
+				os.Remove(partMetaPath(path))
+			}
+			n.mu.Unlock()
+		}
+	}
+}
+
+func (n *Node) cleanPartsLoop(ctx context.Context, interval time.Duration) {
+	n.cleanParts()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n.cleanParts()
 		}
 	}
 }
@@ -602,6 +910,16 @@ func (n *Node) finishTransfer(ctx context.Context, id int64, savedPath string, e
 func (n *Node) CancelTransfer(id int64) {
 	n.mu.Lock()
 	cancel, known := n.transfers[id]
+	var approvalPeer string
+	var approvalMeta incomingMeta
+	for i := len(n.history) - 1; i >= 0; i-- {
+		m := n.history[i]
+		if m.ID == id && m.Incoming && m.File != nil {
+			approvalPeer = m.PeerID
+			approvalMeta = incomingMeta{transferID: m.File.TransferID, folderID: m.File.FolderID}
+			break
+		}
+	}
 	if !known && n.isOutgoingLocked(id) {
 		// Still queued to send; trackTransfer will see this when it starts.
 		// (An incoming folder between files needs no marker: its status
@@ -609,6 +927,9 @@ func (n *Node) CancelTransfer(id int64) {
 		n.transfers[id] = nil
 	}
 	n.mu.Unlock()
+	if approvalPeer != "" {
+		n.completeIncomingApproval(approvalPeer, approvalMeta)
+	}
 	if cancel != nil {
 		cancel(errCanceledByUser)
 	}
@@ -716,6 +1037,9 @@ func safeFileName(name string) string {
 		name = name[i+1:]
 	}
 	name = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
 		if r < 32 || strings.ContainsRune(`<>:"|?*`, r) {
 			return '_'
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -102,6 +103,107 @@ func TestSunshineBadLoginAndNoRequest(t *testing.T) {
 	good := SunshineAPI{User: "admin", Password: "secret", Base: srv.URL}
 	if err := good.SubmitPIN(context.Background(), "1234", "x", "192.168.1.11", 600*time.Millisecond); err == nil || !strings.Contains(err.Error(), "no pairing request") {
 		t.Errorf("no waiting client: %v", err)
+	}
+}
+
+func TestSunshineTransportPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		base         string
+		wantLocalTLS bool
+		wantReject   bool
+	}{
+		{name: "default localhost", base: "", wantLocalTLS: true},
+		{name: "localhost HTTPS", base: "https://localhost:47990", wantLocalTLS: true},
+		{name: "loopback IPv4 HTTPS", base: "https://127.8.9.10:47990", wantLocalTLS: true},
+		{name: "loopback IPv6 HTTPS", base: "https://[::1]:47990", wantLocalTLS: true},
+		{name: "loopback HTTP", base: "http://127.0.0.1:47990", wantLocalTLS: true},
+		{name: "remote HTTPS", base: "https://192.0.2.10:47990"},
+		{name: "remote HTTP", base: "http://192.0.2.10:47990", wantReject: true},
+		{name: "remote hostname HTTP", base: "http://sunshine.example:47990", wantReject: true},
+		{name: "unsupported scheme", base: "ftp://localhost:47990", wantReject: true},
+		{name: "embedded credentials", base: "https://user:pass@localhost:47990", wantReject: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint, client, err := (SunshineAPI{Base: tc.base}).endpoint("/api/config")
+			if tc.wantReject {
+				if err == nil {
+					t.Fatalf("accepted unsafe endpoint %q as %q", tc.base, endpoint)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := client == sunshineLocalClient; got != tc.wantLocalTLS {
+				t.Fatalf("local insecure TLS client = %v, want %v", got, tc.wantLocalTLS)
+			}
+		})
+	}
+}
+
+func TestRemoteSunshineHTTPSVerifiesCertificate(t *testing.T) {
+	_, client, err := (SunshineAPI{Base: "https://sunshine.example:47990"}).endpoint("/api/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client != sunshineRemoteClient {
+		t.Fatal("remote HTTPS did not select the normally verifying client")
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if ok && transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("remote HTTPS disables certificate verification")
+	}
+}
+
+func TestRemoteSunshineRejectsSelfSignedCertificate(t *testing.T) {
+	requests := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer srv.Close()
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Send the connection to the test server while retaining a remote hostname
+	// for policy and TLS verification.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{}
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	old := sunshineRemoteClient
+	sunshineRemoteClient = &http.Client{Timeout: time.Second, Transport: transport, CheckRedirect: refuseSunshineRedirect}
+	t.Cleanup(func() { sunshineRemoteClient = old })
+
+	err = (SunshineAPI{User: "admin", Password: "secret", Base: "https://sunshine.example:" + port}).CheckLogin(context.Background())
+	if err == nil {
+		t.Fatal("remote HTTPS accepted a self-signed certificate")
+	}
+	if requests != 0 {
+		t.Fatal("sent credentials before rejecting the untrusted remote certificate")
+	}
+}
+
+func TestSunshineDoesNotFollowRedirectsWithCredentials(t *testing.T) {
+	redirected := 0
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirected++
+	}))
+	defer destination.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	err := (SunshineAPI{User: "admin", Password: "secret", Base: source.URL}).CheckLogin(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "302") {
+		t.Fatalf("want the redirect response to be refused, got %v", err)
+	}
+	if redirected != 0 {
+		t.Fatal("followed a Sunshine redirect and exposed an authenticated request")
 	}
 }
 

@@ -29,13 +29,25 @@
 
     {#if !pair.error}
       <div class="pair-code" dir="ltr" aria-label={t('pair.code')}>{pair.code}</div>
+      {#if pair.fingerprint}
+        <p class="muted small">{t('pair.fingerprint')} <bdi class="mono" dir="ltr">{pair.fingerprint}</bdi></p>
+      {/if}
     {/if}
 
     {#if pair.kind === 'in'}
+      {#if pair.keyChanged}
+        <p class="pair-warn"><Icon name="alert" size={15} /> {t('pair.keyChanged')}</p>
+      {:else if pair.alreadyPaired}
+        <p class="pair-warn"><Icon name="alert" size={15} /> {t('pair.alreadyPaired')}</p>
+      {/if}
       <p class="pair-warn"><Icon name="shield" size={15} /> {t('pair.warn', { name: pair.name })}</p>
       <div class="dialog-actions">
-        <button class="btn secondary" onclick={() => onAnswer(false)}>{t('pair.decline')}</button>
-        <button class="btn primary" onclick={() => onAnswer(true)}>{t('pair.accept')}</button>
+        {#if pair.keyChanged}
+          <button class="btn primary" onclick={() => onAnswer(false)}>{t('common.close')}</button>
+        {:else}
+          <button class="btn secondary" onclick={() => onAnswer(false)}>{t('pair.decline')}</button>
+          <button class="btn primary" onclick={() => onAnswer(true)}>{t('pair.accept')}</button>
+        {/if}
       </div>
     {:else if pair.error}
       <div class="dialog-actions">

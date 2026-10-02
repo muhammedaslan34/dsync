@@ -66,11 +66,14 @@ const (
 type OffsetRequest struct {
 	TransferID string `json:"transfer_id"`
 	Size       int64  `json:"size"`
+	Name       string `json:"name,omitempty"`
 	// For a file in a folder, so the receiver can tell whether it already
 	// has the whole file from an earlier attempt.
-	FolderID  string `json:"folder_id,omitempty"`
-	FolderRun string `json:"folder_run,omitempty"`
-	RelPath   string `json:"rel_path,omitempty"`
+	FolderID    string `json:"folder_id,omitempty"`
+	FolderRun   string `json:"folder_run,omitempty"`
+	RelPath     string `json:"rel_path,omitempty"`
+	FolderSize  int64  `json:"folder_size,omitempty"`
+	FolderFiles int    `json:"folder_files,omitempty"`
 }
 
 type OffsetResponse struct {

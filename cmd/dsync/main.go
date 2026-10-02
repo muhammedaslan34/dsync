@@ -15,18 +15,18 @@ const usage = `dsync - send text and files between your computers
 
 Usage:
   dsync serve                         run the service that receives messages
-                                      (answer pairing requests by typing y)
+                                      (answer pairing, receive, and control prompts with y/n)
   dsync devices [--wait 1.5s]         list devices on the local network
   dsync text [--to NAME] MESSAGE      send text to another device
   echo hi | dsync text [--to NAME]    send text read from stdin
   dsync send [--to NAME] PATH...      send files and folders (run again to resume)
-  dsync pair [--to NAME]              pair with a device (confirm the code on both sides)
+  dsync pair [--to ID_PREFIX]         pair with a device listed by 'dsync devices'
   dsync control [--to NAME]           control a device's desktop with Moonlight (needs
                                       Sunshine there; sets it up the first time)
   dsync version
 
 Flags for text, send and pair (put them before the message or files):
-  --to NAME          device name or id prefix (optional if only one device is found)
+  --to NAME          saved device name or id prefix (optional if only one device is found)
   --addr HOST[:PORT] send directly, skipping discovery (e.g. over Tailscale)
 `
 

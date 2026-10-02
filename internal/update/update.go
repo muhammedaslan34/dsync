@@ -5,8 +5,12 @@ package update
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,6 +26,20 @@ import (
 
 // Repo is where releases are published.
 const Repo = "muhammedaslan34/dsync"
+
+const (
+	checksumsName = "SHA256SUMS"
+	signatureName = "SHA256SUMS.sig"
+)
+
+// releasePublicKeyDERBase64 is the base64-encoded PKIX DER Ed25519 public key
+// used to authenticate release checksums. Official builds set it with:
+//
+//	-X dsync/internal/update.releasePublicKeyDERBase64=<base64 DER public key>
+//
+// It is deliberately empty in source: a build without a configured release
+// key must fail closed instead of silently trusting unsigned updates.
+var releasePublicKeyDERBase64 string
 
 // apiBase and webBase are variables so tests can point them at a fake
 // GitHub.
@@ -115,8 +133,10 @@ func latestFromAPI(ctx context.Context) (Release, error) {
 }
 
 // latestFromWeb finds the newest release without the API: the release page
-// "releases/latest" redirects to the newest tag, and its SHA256SUMS lists
-// the files (every file is in it, so the download can be checked).
+// "releases/latest" redirects to the newest tag, and its authenticated
+// SHA256SUMS lists the files (every file is in it, so the download can be
+// checked). The signature is verified before any filename in SHA256SUMS is
+// trusted as a release asset.
 func latestFromWeb(ctx context.Context) (Release, error) {
 	noRedirect := &http.Client{
 		Timeout:       client.Timeout,
@@ -144,20 +164,35 @@ func latestFromWeb(ctx context.Context) (Release, error) {
 
 	r := Release{Version: strings.TrimPrefix(tag, "v"), URL: webBase + "/" + Repo + "/releases/tag/" + tag}
 	download := webBase + "/" + Repo + "/releases/download/" + tag + "/"
-	sums, err := get(ctx, download+"SHA256SUMS")
+	sums, err := getSmall(ctx, download+checksumsName, 1<<20)
 	if err != nil {
 		return Release{}, err
 	}
-	defer sums.Body.Close()
-	r.Assets = append(r.Assets, Asset{Name: "SHA256SUMS", URL: download + "SHA256SUMS"})
-	sc := bufio.NewScanner(io.LimitReader(sums.Body, 1<<20))
+	sig, err := getSmall(ctx, download+signatureName, ed25519.SignatureSize)
+	if err != nil {
+		return Release{}, fmt.Errorf("release has no usable %s: %w", signatureName, err)
+	}
+	if err := verifyChecksumSignature(sums, sig); err != nil {
+		return Release{}, err
+	}
+	r.Assets = append(r.Assets,
+		Asset{Name: checksumsName, URL: download + checksumsName},
+		Asset{Name: signatureName, URL: download + signatureName},
+	)
+	sc := bufio.NewScanner(bytes.NewReader(sums))
 	for sc.Scan() {
 		if f := strings.Fields(sc.Text()); len(f) == 2 && len(f[0]) == 64 {
+			if _, err := hex.DecodeString(f[0]); err != nil {
+				continue
+			}
 			name := strings.TrimPrefix(f[1], "*")
 			if name != "" && !strings.ContainsAny(name, "/\\") {
 				r.Assets = append(r.Assets, Asset{Name: name, URL: download + name})
 			}
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return Release{}, fmt.Errorf("read %s: %w", checksumsName, err)
 	}
 	return r, nil
 }
@@ -197,22 +232,41 @@ func parse(v string) ([3]int, bool) {
 	return out, true
 }
 
-// Download fetches the named asset of r into dir, checking it against the
-// release's SHA256SUMS. progress gets the bytes so far and the total.
+// Download fetches the named asset of r into dir. It first authenticates the
+// release's SHA256SUMS with the public key pinned into this build, then checks
+// the downloaded asset against that authenticated checksum. progress gets the
+// bytes so far and the total.
 func Download(ctx context.Context, r Release, name, dir string, progress func(done, total int64)) (string, error) {
 	a, ok := r.asset(name)
 	if !ok {
 		return "", fmt.Errorf("release %s has no %s", r.Version, name)
 	}
-	sums, ok := r.asset("SHA256SUMS")
+	sums, ok := r.asset(checksumsName)
 	if !ok {
-		return "", errors.New("release has no SHA256SUMS to check the download against")
+		return "", fmt.Errorf("release has no %s to check the download against", checksumsName)
 	}
-	want, err := expectedSum(ctx, sums.URL, name)
+	signature, ok := r.asset(signatureName)
+	if !ok {
+		return "", fmt.Errorf("release has no %s; refusing an unauthenticated update", signatureName)
+	}
+	sumsData, err := getSmall(ctx, sums.URL, 1<<20)
+	if err != nil {
+		return "", err
+	}
+	signatureData, err := getSmall(ctx, signature.URL, ed25519.SignatureSize)
+	if err != nil {
+		return "", fmt.Errorf("could not download %s: %w", signatureName, err)
+	}
+	if err := verifyChecksumSignature(sumsData, signatureData); err != nil {
+		return "", err
+	}
+	want, err := expectedSum(sumsData, name)
 	if err != nil {
 		return "", err
 	}
 
+	// Do not fetch or create the target file until its expected checksum has
+	// been authenticated above.
 	resp, err := get(ctx, a.URL)
 	if err != nil {
 		return "", err
@@ -269,21 +323,59 @@ func get(ctx context.Context, url string) (*http.Response, error) {
 	return resp, nil
 }
 
-func expectedSum(ctx context.Context, url, name string) (string, error) {
+func getSmall(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
 	resp, err := get(ctx, url)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
-	sc := bufio.NewScanner(io.LimitReader(resp.Body, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("downloaded metadata exceeds %d bytes", maxBytes)
+	}
+	return data, nil
+}
+
+func verifyChecksumSignature(sums, signature []byte) error {
+	if releasePublicKeyDERBase64 == "" {
+		return errors.New("this build has no release verification public key; refusing to install an update")
+	}
+	der, err := base64.StdEncoding.DecodeString(releasePublicKeyDERBase64)
+	if err != nil {
+		return errors.New("this build has an invalid release verification public key; refusing to install an update")
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return errors.New("this build has an invalid release verification public key; refusing to install an update")
+	}
+	publicKey, ok := parsed.(ed25519.PublicKey)
+	if !ok || len(publicKey) != ed25519.PublicKeySize {
+		return errors.New("this build's release verification key is not Ed25519; refusing to install an update")
+	}
+	if len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, sums, signature) {
+		return errors.New("SHA256SUMS has an invalid release signature; refusing to install the update")
+	}
+	return nil
+}
+
+func expectedSum(sums []byte, name string) (string, error) {
+	sc := bufio.NewScanner(bytes.NewReader(sums))
 	for sc.Scan() {
 		// "<hex>  <name>" (sha256sum format; "*" marks binary mode)
 		fields := strings.Fields(sc.Text())
 		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == name && len(fields[0]) == 64 {
-			return strings.ToLower(fields[0]), nil
+			if _, err := hex.DecodeString(fields[0]); err == nil {
+				return strings.ToLower(fields[0]), nil
+			}
 		}
 	}
-	return "", fmt.Errorf("SHA256SUMS has no entry for %s", name)
+	if err := sc.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("%s has no valid entry for %s", checksumsName, name)
 }
 
 type progressWriter struct {

@@ -1,5 +1,6 @@
 // Formatting helpers, matching the desktop app's (frontend/src/lib/format.js).
 import { getI18n } from './i18n';
+export { safeFileName } from './safe-file-name';
 
 export const osLabel: Record<string, string> = { windows: 'Windows', linux: 'Linux', darwin: 'macOS', android: 'Android', ios: 'iOS' };
 
@@ -181,10 +182,4 @@ export function hueFor(id: string): number {
   let h = 7;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return hues[h % hues.length];
-}
-
-/** A file name safe to use on the phone's file system. */
-export function safeFileName(name: string): string {
-  const n = name.replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '').trim();
-  return n.slice(0, 180) || 'file';
 }

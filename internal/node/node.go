@@ -57,12 +57,17 @@ type Peer struct {
 	LastSeen int64  `json:"lastSeen"` // unix ms, when we last reached it
 	// LastHeard is when it last contacted us (unix ms).
 	LastHeard int64 `json:"lastHeard"`
+	// Fingerprint is the short pinned key shown beside the trusted name.
+	Fingerprint string `json:"fingerprint,omitempty"`
 	// OneWay means it reached us recently but we can't reach it: usually
 	// its firewall blocks incoming connections.
 	OneWay bool `json:"oneWay"`
 	// Phone is a phone paired by QR code (docs/phone-protocol.md); it is
 	// online while its app polls.
 	Phone bool `json:"phone"`
+	// CanControl means this device is allowed to control this computer.
+	// It does not describe whether the other computer permits us.
+	CanControl bool `json:"canControl"`
 }
 
 // oneWayWindow is how recently a device must have contacted us for "we
@@ -71,13 +76,14 @@ const oneWayWindow = 3 * time.Minute
 
 // Message is a text sent to or received from a peer.
 type Message struct {
-	ID       int64     `json:"id"`
-	Time     int64     `json:"time"` // unix ms
-	PeerID   string    `json:"peerId"`
-	PeerName string    `json:"peerName"`
-	Incoming bool      `json:"incoming"`
-	Text     string    `json:"text,omitempty"`
-	File     *FileInfo `json:"file,omitempty"`
+	ID              int64     `json:"id"`
+	Time            int64     `json:"time"` // unix ms
+	PeerID          string    `json:"peerId"`
+	PeerName        string    `json:"peerName"`
+	PeerFingerprint string    `json:"peerFingerprint,omitempty"`
+	Incoming        bool      `json:"incoming"`
+	Text            string    `json:"text,omitempty"`
+	File            *FileInfo `json:"file,omitempty"`
 }
 
 type Node struct {
@@ -93,6 +99,10 @@ type Node struct {
 	pending   map[string]*pendingPair       // incoming pair requests by request id
 	pairing   map[string]context.CancelFunc // outgoing pair requests by peer id
 	parts     map[string]*partClaim         // partial files being written, by path
+	// partReservations accounts for bytes promised by active receives before
+	// they reach the filesystem. It is protected by mu.
+	partReservations map[string]partReservation
+	freeSpace        func(string) (int64, error) // injectable disk-space query
 	// folderReps are progress callbacks of incoming folders, by message id.
 	folderReps map[int64]func(int64)
 
@@ -100,6 +110,12 @@ type Node struct {
 	phones phoneState
 	// controls are remote control setups in progress, by peer id.
 	controls map[string]context.CancelFunc
+	// controlPINs are automatic Sunshine PIN submissions waiting for the
+	// person at this computer to approve them.
+	controlPINs map[string]*pendingControlPIN
+	// incoming holds file/folder consent prompts and cached answers.
+	incoming          map[string]*pendingIncoming
+	incomingDecisions map[string]*incomingDecision
 }
 
 // New loads (or creates) this device's identity and history.
@@ -113,13 +129,18 @@ func New(cfg *config.Config, emit func(event string, data any)) (*Node, error) {
 	}
 	n := &Node{
 		cfg: cfg, id: id, cl: client.New(id), emit: emit,
-		peers:      map[string]*Peer{},
-		transfers:  map[int64]context.CancelCauseFunc{},
-		pending:    map[string]*pendingPair{},
-		pairing:    map[string]context.CancelFunc{},
-		parts:      map[string]*partClaim{},
-		folderReps: map[int64]func(int64){},
-		controls:   map[string]context.CancelFunc{},
+		peers:             map[string]*Peer{},
+		transfers:         map[int64]context.CancelCauseFunc{},
+		pending:           map[string]*pendingPair{},
+		pairing:           map[string]context.CancelFunc{},
+		parts:             map[string]*partClaim{},
+		partReservations:  map[string]partReservation{},
+		freeSpace:         freeSpace,
+		folderReps:        map[int64]func(int64){},
+		controls:          map[string]context.CancelFunc{},
+		controlPINs:       map[string]*pendingControlPIN{},
+		incoming:          map[string]*pendingIncoming{},
+		incomingDecisions: map[string]*incomingDecision{},
 		phones: phoneState{
 			pairings: map[string]*pendingPhone{},
 			uploads:  map[string]*phoneUpload{},
@@ -167,7 +188,7 @@ func (n *Node) Run(ctx context.Context) error {
 		}
 	}()
 	go n.scanLoop(ctx)
-	go n.cleanParts()
+	go n.cleanPartsLoop(ctx, partCleanupInterval)
 	go n.cleanOutbox()
 	go n.restoreSavedPointer()
 	go func() {
@@ -284,12 +305,40 @@ func (n *Node) Peers() []Peer {
 	out := make([]Peer, 0, len(n.peers))
 	for _, p := range n.peers {
 		c := *p
-		_, c.Paired = n.cfg.TrustedByID(p.ID)
+		t, paired := n.cfg.TrustedByID(p.ID)
+		c.Paired = paired
+		c.CanControl = paired && t.CanControl
+		if paired {
+			c.Name = t.Name
+			c.Fingerprint = identity.Short(t.Fingerprint)
+		}
 		c.Paired = c.Paired || c.Phone
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out
+}
+
+// SetControlPermission grants or revokes a paired device's permission to
+// use the remote-control API on this computer. Sharing text and files is
+// unaffected.
+func (n *Node) SetControlPermission(peerID string, allow bool) error {
+	n.mu.Lock()
+	t, ok := n.cfg.TrustedByID(peerID)
+	if !ok {
+		n.mu.Unlock()
+		return fmt.Errorf("device %s is not paired", peerID)
+	}
+	t.CanControl = allow
+	err := n.cfg.Trust(t)
+	if err == nil {
+		err = n.cfg.Save()
+	}
+	n.mu.Unlock()
+	if err == nil {
+		n.emit(EventPeers, n.Peers())
+	}
+	return err
 }
 
 // AddPeer remembers a device by address, for networks where discovery
@@ -387,19 +436,12 @@ func (n *Node) SendText(ctx context.Context, peerID, text string) error {
 }
 
 // learnPeer records a paired device that contacted us, even if discovery
-// can't see it (e.g. over a VPN), and keeps its name current. It returns the
-// name to show.
+// can't see it (e.g. over a VPN). The display name remains the one accepted
+// while pairing, never a later self-asserted request header.
 func (n *Node) learnPeer(from config.TrustedPeer, name string, port int, remoteAddr string) string {
-	if name == "" {
-		name = from.Name
-	}
+	name = from.Name
 	host, _, err := net.SplitHostPort(remoteAddr)
 	n.mu.Lock()
-	if name != from.Name {
-		from.Name = name
-		n.cfg.Trust(from)
-		n.cfg.Save()
-	}
 	now := time.Now().UnixMilli()
 	p, known := n.peers[from.ID]
 	switch {
@@ -425,11 +467,22 @@ func (n *Node) learnPeer(from config.TrustedPeer, name string, port int, remoteA
 func (n *Node) History() []Message {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return slices.Clone(n.history)
+	out := slices.Clone(n.history)
+	for i := range out {
+		if t, ok := n.cfg.TrustedByID(out[i].PeerID); ok {
+			out[i].PeerName = t.Name
+			out[i].PeerFingerprint = identity.Short(t.Fingerprint)
+		}
+	}
+	return out
 }
 
 func (n *Node) addMessage(m Message) Message {
 	n.mu.Lock()
+	if t, ok := n.cfg.TrustedByID(m.PeerID); ok {
+		m.PeerName = t.Name
+		m.PeerFingerprint = identity.Short(t.Fingerprint)
+	}
 	m.Time = time.Now().UnixMilli()
 	if len(n.history) > 0 {
 		m.ID = n.history[len(n.history)-1].ID + 1
@@ -452,6 +505,10 @@ func (n *Node) updateFile(id int64, change func(f *FileInfo)) {
 	var updated *Message
 	for i := len(n.history) - 1; i >= 0; i-- {
 		if n.history[i].ID == id && n.history[i].File != nil {
+			if t, ok := n.cfg.TrustedByID(n.history[i].PeerID); ok {
+				n.history[i].PeerName = t.Name
+				n.history[i].PeerFingerprint = identity.Short(t.Fingerprint)
+			}
 			f := *n.history[i].File
 			change(&f)
 			n.history[i].File = &f

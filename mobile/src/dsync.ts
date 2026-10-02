@@ -4,6 +4,7 @@
 import { File, FileMode } from 'expo-file-system';
 import { EnvelopeError, KEY_SIZE, fromBase64, openEnvelope, sealEnvelope, toBase64, utf8Encode } from './crypto';
 import { type MsgKey, type Vars, t } from './i18n';
+import { isLocalNetworkAddress, localNetworkAddresses } from './network';
 
 export const DEFAULT_PORT = 47102;
 export const MAX_TEXT_BYTES = 1 << 20;
@@ -175,10 +176,7 @@ export function parsePairingUrl(raw: string): PairingCode {
   if (!params.cid) throw bad('cid');
   const port = params.port ? Number(params.port) : DEFAULT_PORT;
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw bad('port');
-  const addrs = (params.addr ?? '')
-    .split(',')
-    .map((a) => a.trim())
-    .filter(Boolean);
+  const addrs = localNetworkAddresses((params.addr ?? '').split(',').filter(Boolean));
   if (addrs.length === 0) throw bad('addr');
   return { v, pid: params.pid, key, name: params.name || t('computer.title'), cid: params.cid, os: params.os || '', port, addrs };
 }
@@ -186,7 +184,8 @@ export function parsePairingUrl(raw: string): PairingCode {
 // ---------- requests ----------
 
 function hostPart(addr: string): string {
-  return addr.includes(':') && !addr.startsWith('[') ? `[${addr}]` : addr;
+  const escaped = addr.replace(/%/g, '%25');
+  return escaped.includes(':') && !escaped.startsWith('[') ? `[${escaped}]` : escaped;
 }
 
 interface Target {
@@ -202,6 +201,9 @@ async function post<T>(
   body: unknown,
   timeoutMs: number,
 ): Promise<T> {
+  if (!isLocalNetworkAddress(t.address)) {
+    throw new DsyncError('unreachable', 'Refusing a cleartext connection outside the local network');
+  }
   const sealed = sealEnvelope(t.key, body);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);

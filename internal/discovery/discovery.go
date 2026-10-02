@@ -22,6 +22,19 @@ type Peer struct {
 	IP net.IP
 }
 
+// PublicName is announced before two devices trust each other. The stable
+// device ID and port remain available so discovery and pairing still work,
+// but the user-chosen host name is not broadcast to everyone on the LAN.
+const PublicName = "dsync device"
+
+// PublicDevice removes user-identifying metadata from a discovery/info
+// response. The full device is returned over authenticated connections once
+// the caller's certificate is trusted.
+func PublicDevice(d proto.Device) proto.Device {
+	d.Name = PublicName
+	return d
+}
+
 // Addr is the host:port of the peer's HTTP service.
 func (p Peer) Addr() string {
 	return net.JoinHostPort(p.IP.String(), strconv.Itoa(p.Port))
@@ -52,7 +65,7 @@ func Respond(ctx context.Context, self func() proto.Device) error {
 			// Windows reports ICMP "port unreachable" as a read error; ignore it.
 			continue
 		}
-		me := self()
+		me := PublicDevice(self())
 		var p proto.Packet
 		if json.Unmarshal(buf[:n], &p) != nil || p.Type != proto.TypeDiscover || p.ID == me.ID {
 			continue
@@ -70,6 +83,7 @@ func Discover(ctx context.Context, self proto.Device, wait time.Duration) ([]Pee
 	}
 	defer conn.Close()
 
+	self = PublicDevice(self)
 	req, _ := json.Marshal(proto.Packet{Type: proto.TypeDiscover, Version: proto.Version, Device: self})
 	targets := broadcastAddrs()
 	send := func() {

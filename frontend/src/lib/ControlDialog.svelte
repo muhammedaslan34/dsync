@@ -52,6 +52,7 @@
         <Avatar name={peer.name} id={peer.id} size={40} />
         <div>
           <h2>{t('control.title', { name: peer.name })}</h2>
+          {#if peer.fingerprint}<p class="muted small"><bdi class="mono" dir="ltr">{peer.fingerprint}</bdi></p>{/if}
           <p class="muted">{t('control.subtitle')}</p>
         </div>
       </div>

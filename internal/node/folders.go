@@ -245,5 +245,6 @@ func (n *Node) handleFolderEnd(w http.ResponseWriter, r *http.Request, from conf
 		})
 		n.dropFolderReporter(m.ID)
 	}
+	n.completeIncomingApproval(from.ID, incomingMeta{folderID: e.FolderID})
 	w.WriteHeader(http.StatusNoContent)
 }

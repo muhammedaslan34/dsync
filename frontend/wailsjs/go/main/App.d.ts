@@ -11,6 +11,10 @@ export function AllowSunshineFirewall():Promise<void>;
 
 export function AnswerPair(arg1:string,arg2:boolean):Promise<void>;
 
+export function AnswerControlPIN(arg1:string,arg2:boolean):Promise<void>;
+
+export function AnswerIncoming(arg1:string,arg2:boolean):Promise<void>;
+
 export function Background():Promise<main.BackgroundSettings>;
 
 export function CancelControl(arg1:string):Promise<void>;
@@ -63,11 +67,15 @@ export function Peers():Promise<Array<node.Peer>>;
 
 export function PendingPairs():Promise<Array<node.PairRequest>>;
 
+export function PendingIncoming():Promise<Array<node.IncomingRequest>>;
+
 export function PickFiles(arg1:string):Promise<void>;
 
 export function PickFolder(arg1:string):Promise<void>;
 
 export function ReceiveDir():Promise<string>;
+
+export function ReceiveSettings():Promise<node.ReceiveSettings>;
 
 export function RetryTransfer(arg1:number):Promise<void>;
 
@@ -87,6 +95,8 @@ export function SetAppMenu(arg1:boolean):Promise<void>;
 
 export function SetAutostart(arg1:boolean):Promise<void>;
 
+export function SetAskBeforeReceiving(arg1:boolean):Promise<void>;
+
 export function SetClipboardSync(arg1:boolean):Promise<void>;
 
 export function SetKeepInTray(arg1:boolean):Promise<void>;
@@ -96,6 +106,8 @@ export function SetLanguage(arg1:string):Promise<void>;
 export function SetName(arg1:string):Promise<void>;
 
 export function SetSunshineLogin(arg1:string,arg2:string):Promise<void>;
+
+export function SetControlPermission(arg1:string,arg2:boolean):Promise<void>;
 
 export function StartControl(arg1:string,arg2:node.ControlOptions):Promise<void>;
 

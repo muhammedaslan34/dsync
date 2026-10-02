@@ -14,6 +14,14 @@ export function AnswerPair(arg1, arg2) {
   return window['go']['main']['App']['AnswerPair'](arg1, arg2);
 }
 
+export function AnswerControlPIN(arg1, arg2) {
+  return window['go']['main']['App']['AnswerControlPIN'](arg1, arg2);
+}
+
+export function AnswerIncoming(arg1, arg2) {
+  return window['go']['main']['App']['AnswerIncoming'](arg1, arg2);
+}
+
 export function Background() {
   return window['go']['main']['App']['Background']();
 }
@@ -118,6 +126,10 @@ export function PendingPairs() {
   return window['go']['main']['App']['PendingPairs']();
 }
 
+export function PendingIncoming() {
+  return window['go']['main']['App']['PendingIncoming']();
+}
+
 export function PickFiles(arg1) {
   return window['go']['main']['App']['PickFiles'](arg1);
 }
@@ -128,6 +140,10 @@ export function PickFolder(arg1) {
 
 export function ReceiveDir() {
   return window['go']['main']['App']['ReceiveDir']();
+}
+
+export function ReceiveSettings() {
+  return window['go']['main']['App']['ReceiveSettings']();
 }
 
 export function RetryTransfer(arg1) {
@@ -166,6 +182,10 @@ export function SetAutostart(arg1) {
   return window['go']['main']['App']['SetAutostart'](arg1);
 }
 
+export function SetAskBeforeReceiving(arg1) {
+  return window['go']['main']['App']['SetAskBeforeReceiving'](arg1);
+}
+
 export function SetClipboardSync(arg1) {
   return window['go']['main']['App']['SetClipboardSync'](arg1);
 }
@@ -184,6 +204,10 @@ export function SetName(arg1) {
 
 export function SetSunshineLogin(arg1, arg2) {
   return window['go']['main']['App']['SetSunshineLogin'](arg1, arg2);
+}
+
+export function SetControlPermission(arg1, arg2) {
+  return window['go']['main']['App']['SetControlPermission'](arg1, arg2);
 }
 
 export function StartControl(arg1, arg2) {

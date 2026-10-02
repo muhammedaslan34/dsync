@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"dsync/internal/client"
+	"dsync/internal/config"
 	"dsync/internal/control"
+	"dsync/internal/proto"
 )
 
 // controlFakes puts fake moonlight and sunshine programs on the PATH and
@@ -227,17 +231,103 @@ func (l *eventLog) pins() []ControlPIN {
 }
 
 func controlPair(t *testing.T) (testNode, testNode, *eventLog, *eventLog) {
+	return controlPairWithConsent(t, true)
+}
+
+func controlPairWithConsent(t *testing.T, autoAccept bool) (testNode, testNode, *eventLog, *eventLog) {
 	la, lb := &eventLog{}, &eventLog{}
-	a, b := newTestNodeWith(t, "Laptop", la.emit), newTestNodeWith(t, "Gaming-PC", lb.emit)
+	var controlled *Node
+	emitB := func(event string, data any) {
+		lb.emit(event, data)
+		if autoAccept && event == EventControlPIN {
+			if req := data.(ControlPIN); req.Automatic {
+				controlled.AnswerControlPIN(req.ID, true)
+			}
+		}
+	}
+	a, b := newTestNodeWith(t, "Laptop", la.emit), newTestNodeWith(t, "Gaming-PC", emitB)
+	controlled = b.Node
 	pair(a, b, b.addr)
 	pair(b, a, a.addr)
+	if err := b.SetControlPermission(a.cfg.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	return a, b, la, lb
 }
 
-func TestControlPairsAutomaticallyAndStreams(t *testing.T) {
+func TestControlRoutesRequireSeparatePermission(t *testing.T) {
+	a, b := newTestNode(t, "Laptop"), newTestNode(t, "Gaming-PC")
+	pair(a, b, b.addr)
+	target, _ := a.trusted(b.cfg.ID)
+
+	requests := []struct {
+		name string
+		call func() error
+	}{
+		{"status", func() error { _, err := a.cl.ControlStatus(t.Context(), b.addr, target.Fingerprint); return err }},
+		{"start sunshine", func() error { _, err := a.cl.StartSunshine(t.Context(), b.addr, target.Fingerprint); return err }},
+		{"pin", func() error {
+			_, err := a.cl.ControlPIN(t.Context(), b.addr, target.Fingerprint, proto.ControlPINRequest{PIN: "1234"})
+			return err
+		}},
+		{"configure", func() error {
+			_, err := a.cl.ControlConfigure(t.Context(), b.addr, target.Fingerprint, proto.ControlConfigure{})
+			return err
+		}},
+	}
+	for _, tc := range requests {
+		t.Run(tc.name+" denied", func(t *testing.T) {
+			var status *client.StatusError
+			if err := tc.call(); !errors.As(err, &status) || status.Code != http.StatusForbidden {
+				t.Fatalf("got %v, want 403", err)
+			}
+		})
+	}
+
+	// Pairing still permits ordinary sharing.
+	if err := a.SendText(t.Context(), b.cfg.ID, "still shared"); err != nil {
+		t.Fatalf("text sharing after control denial: %v", err)
+	}
+	if got := b.History(); len(got) != 1 || got[0].Text != "still shared" {
+		t.Fatalf("received history: %+v", got)
+	}
+
+	if err := b.SetControlPermission(a.cfg.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.cl.ControlStatus(t.Context(), b.addr, target.Fingerprint); err != nil {
+		t.Fatalf("status after grant: %v", err)
+	}
+	if peers := b.Peers(); len(peers) != 1 || !peers[0].CanControl {
+		t.Fatalf("peer permission after grant: %+v", peers)
+	}
+	loaded, err := config.LoadFrom(b.cfg.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peer, ok := loaded.TrustedByID(a.cfg.ID); !ok || !peer.CanControl {
+		t.Fatalf("persisted peer after grant: %+v, found=%v", peer, ok)
+	}
+	if err := b.SetControlPermission(a.cfg.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	var status *client.StatusError
+	if _, err := a.cl.ControlStatus(t.Context(), b.addr, target.Fingerprint); !errors.As(err, &status) || status.Code != http.StatusForbidden {
+		t.Fatalf("status after revocation: %v", err)
+	}
+	loaded, err = config.LoadFrom(b.cfg.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peer, ok := loaded.TrustedByID(a.cfg.ID); !ok || peer.CanControl {
+		t.Fatalf("persisted peer after revocation: %+v, found=%v", peer, ok)
+	}
+}
+
+func TestControlPairsAfterLocalConsentAndStreams(t *testing.T) {
 	f := newControlFakes(t, true, true)
 	sunshineUp(t)
-	a, b, la, lb := controlPair(t)
+	a, b, la, lb := controlPairWithConsent(t, false)
 	b.cfg.SunshineWeb = f.web.URL
 	if err := b.SetSunshineLogin(t.Context(), "admin", "pw"); err != nil {
 		t.Fatal(err)
@@ -246,12 +336,30 @@ func TestControlPairsAutomaticallyAndStreams(t *testing.T) {
 	if err := a.StartControl(t.Context(), b.cfg.ID, ControlOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	var request ControlPIN
+	for range 200 {
+		pins := lb.pins()
+		if len(pins) > 0 {
+			request = pins[0]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if request.ID == "" || !request.Automatic || request.PeerName != "Laptop" {
+		t.Fatalf("automatic PIN consent request: %+v", request)
+	}
+	select {
+	case pin := <-f.pinSeen:
+		t.Fatalf("Sunshine received PIN %q before local consent", pin)
+	default:
+	}
+	b.AnswerControlPIN(request.ID, true)
 	if s := la.waitControl(t); s.Step != "done" {
 		t.Fatalf("ended with %+v", s)
 	}
 	f.waitCall(t, "stream 127.0.0.1 Desktop")
-	if len(lb.pins()) != 0 {
-		t.Error("the controlled computer asked for the PIN by hand despite having a login")
+	if len(lb.pins()) != 1 {
+		t.Errorf("consent requests: %+v", lb.pins())
 	}
 
 	// Next time it is already paired: straight to the stream.
@@ -260,6 +368,44 @@ func TestControlPairsAutomaticallyAndStreams(t *testing.T) {
 	la.waitControl(t)
 	if strings.Count(f.calls(), "pair ") != 1 {
 		t.Errorf("paired again:\n%s", f.calls())
+	}
+}
+
+func TestAutomaticControlPINCanBeDeclined(t *testing.T) {
+	f := newControlFakes(t, false, false)
+	a, b, _, lb := controlPairWithConsent(t, false)
+	b.cfg.SunshineWeb = f.web.URL
+	if err := b.SetSunshineLogin(t.Context(), "admin", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	target, _ := a.trusted(b.cfg.ID)
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.cl.ControlPIN(t.Context(), b.addr, target.Fingerprint, proto.ControlPINRequest{PIN: "4821", FromName: "Laptop"})
+		done <- err
+	}()
+
+	var request ControlPIN
+	for range 200 {
+		pins := lb.pins()
+		if len(pins) > 0 {
+			request = pins[0]
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if request.ID == "" || !request.Automatic {
+		t.Fatalf("automatic PIN consent request: %+v", request)
+	}
+	b.AnswerControlPIN(request.ID, false)
+	var status *client.StatusError
+	if err := <-done; !errors.As(err, &status) || status.Code != http.StatusForbidden {
+		t.Fatalf("declined request returned %v", err)
+	}
+	select {
+	case pin := <-f.pinSeen:
+		t.Fatalf("Sunshine received declined PIN %q", pin)
+	default:
 	}
 }
 

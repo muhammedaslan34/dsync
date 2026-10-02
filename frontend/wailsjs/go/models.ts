@@ -215,6 +215,7 @@ export namespace node {
 	    sunshineRunning: boolean;
 	    sunshineHint?: string;
 	    sunshineLogin: boolean;
+	    sunshineLoginError?: string;
 	    sunshineBlocked: boolean;
 	    sunshineUrl: string;
 	
@@ -230,6 +231,7 @@ export namespace node {
 	        this.sunshineRunning = source["sunshineRunning"];
 	        this.sunshineHint = source["sunshineHint"];
 	        this.sunshineLogin = source["sunshineLogin"];
+	        this.sunshineLoginError = source["sunshineLoginError"];
 	        this.sunshineBlocked = source["sunshineBlocked"];
 	        this.sunshineUrl = source["sunshineUrl"];
 	    }
@@ -239,6 +241,7 @@ export namespace node {
 	    time: number;
 	    peerId: string;
 	    peerName: string;
+	    peerFingerprint?: string;
 	    incoming: boolean;
 	    text?: string;
 	    file?: FileInfo;
@@ -253,6 +256,7 @@ export namespace node {
 	        this.time = source["time"];
 	        this.peerId = source["peerId"];
 	        this.peerName = source["peerName"];
+	        this.peerFingerprint = source["peerFingerprint"];
 	        this.incoming = source["incoming"];
 	        this.text = source["text"];
 	        this.file = this.convertValues(source["file"], FileInfo);
@@ -276,12 +280,42 @@ export namespace node {
 		    return a;
 		}
 	}
+	export class IncomingRequest {
+	    id: string;
+	    peerId: string;
+	    peerName: string;
+	    fingerprint?: string;
+	    name: string;
+	    size: number;
+	    folder?: boolean;
+	    files?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new IncomingRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.peerId = source["peerId"];
+	        this.peerName = source["peerName"];
+	        this.fingerprint = source["fingerprint"];
+	        this.name = source["name"];
+	        this.size = source["size"];
+	        this.folder = source["folder"];
+	        this.files = source["files"];
+	    }
+	}
 	export class PairRequest {
 	    id: string;
 	    peerId: string;
 	    name: string;
 	    os: string;
 	    code: string;
+	    fingerprint: string;
+	    alreadyPaired?: boolean;
+	    keyChanged?: boolean;
+	    existingFingerprint?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PairRequest(source);
@@ -294,6 +328,10 @@ export namespace node {
 	        this.name = source["name"];
 	        this.os = source["os"];
 	        this.code = source["code"];
+	        this.fingerprint = source["fingerprint"];
+	        this.alreadyPaired = source["alreadyPaired"];
+	        this.keyChanged = source["keyChanged"];
+	        this.existingFingerprint = source["existingFingerprint"];
 	    }
 	}
 	export class Peer {
@@ -306,8 +344,10 @@ export namespace node {
 	    paired: boolean;
 	    lastSeen: number;
 	    lastHeard: number;
+	    fingerprint?: string;
 	    oneWay: boolean;
 	    phone: boolean;
+	    canControl: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Peer(source);
@@ -324,8 +364,22 @@ export namespace node {
 	        this.paired = source["paired"];
 	        this.lastSeen = source["lastSeen"];
 	        this.lastHeard = source["lastHeard"];
+	        this.fingerprint = source["fingerprint"];
 	        this.oneWay = source["oneWay"];
 	        this.phone = source["phone"];
+	        this.canControl = source["canControl"];
+	    }
+	}
+	export class ReceiveSettings {
+	    askBeforeAccepting: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ReceiveSettings(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.askBeforeAccepting = source["askBeforeAccepting"];
 	    }
 	}
 	export class PhonePairing {
@@ -387,4 +441,3 @@ export namespace proto {
 	}
 
 }
-

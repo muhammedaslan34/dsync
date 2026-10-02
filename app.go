@@ -190,6 +190,27 @@ func (a *App) AnswerPair(requestID string, accept bool) { a.node.AnswerPair(requ
 
 func (a *App) PendingPairs() []node.PairRequest { return a.node.PendingPairs() }
 
+func (a *App) ReceiveSettings() node.ReceiveSettings { return a.node.ReceiveSettings() }
+
+func (a *App) SetAskBeforeReceiving(on bool) error { return a.node.SetAskBeforeReceiving(on) }
+
+func (a *App) PendingIncoming() []node.IncomingRequest { return a.node.PendingIncoming() }
+
+func (a *App) AnswerIncoming(requestID string, accept bool) {
+	a.node.AnswerIncoming(requestID, accept)
+}
+
+// SetControlPermission lets a paired peer control this computer. It is a
+// separate permission from text and file sharing.
+func (a *App) SetControlPermission(peerID string, allow bool) error {
+	return a.node.SetControlPermission(peerID, allow)
+}
+
+// AnswerControlPIN confirms or declines automatic Sunshine PIN submission.
+func (a *App) AnswerControlPIN(requestID string, accept bool) {
+	a.node.AnswerControlPIN(requestID, accept)
+}
+
 func (a *App) Unpair(peerID string) error { return a.node.Unpair(a.ctx, peerID) }
 
 // SendPasted sends data pasted into the window (e.g. a copied image), given

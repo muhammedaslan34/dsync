@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -27,18 +28,78 @@ type SunshineAPI struct {
 // ErrBadLogin means Sunshine refused the username or password.
 var ErrBadLogin = errors.New("sunshine refused the username or password")
 
-// sunshineClient accepts Sunshine's self-signed certificate; it only ever
-// talks to this computer.
-var sunshineClient = &http.Client{
-	Timeout:   10 * time.Second,
+// Sunshine normally runs on this computer with a self-signed certificate.
+// Only the client selected for a proven local-machine address bypasses
+// certificate verification. A configured remote HTTPS endpoint uses normal
+// Web PKI verification instead.
+var sunshineLocalClient = &http.Client{
+	Timeout:       10 * time.Second,
+	CheckRedirect: refuseSunshineRedirect,
+	// #nosec G402 -- selected only after isLocalMachineHost proves the target
+	// is loopback or an IP assigned to this machine.
 	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 }
 
-func (s SunshineAPI) base() string {
-	if s.Base != "" {
-		return s.Base
+var sunshineRemoteClient = &http.Client{Timeout: 10 * time.Second, CheckRedirect: refuseSunshineRedirect}
+
+// Redirects are unnecessary for Sunshine's API. Refusing them prevents a
+// local/self-signed endpoint from redirecting an authenticated request to a
+// remote address or from HTTPS down to HTTP.
+func refuseSunshineRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+func (s SunshineAPI) endpoint(path string) (string, *http.Client, error) {
+	base := s.Base
+	if base == "" {
+		base = fmt.Sprintf("https://localhost:%d", SunshineWebPort)
 	}
-	return fmt.Sprintf("https://localhost:%d", SunshineWebPort)
+	u, err := url.Parse(base)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", nil, errors.New("invalid Sunshine web address")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", nil, errors.New("Sunshine web address must use HTTPS")
+	}
+	local := isLocalMachineHost(u.Hostname())
+	if u.Scheme == "http" && !local {
+		return "", nil, errors.New("refusing to send Sunshine credentials over HTTP to a remote host")
+	}
+	client := sunshineRemoteClient
+	if local {
+		client = sunshineLocalClient
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + path
+	u.RawPath = ""
+	return u.String(), client, nil
+}
+
+func isLocalMachineHost(host string) bool {
+	if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
+		return true
+	}
+	// url.Hostname decodes an IPv6 zone ("fe80::1%eth0"); the zone selects an
+	// interface but is not part of the address compared below.
+	ipHost := host
+	if i := strings.LastIndex(ipHost, "%"); i >= 0 && strings.Contains(ipHost, ":") {
+		ipHost = ipHost[:i]
+	}
+	ip := net.ParseIP(ipHost)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		local, _, err := net.ParseCIDR(addr.String())
+		if err == nil && local.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s SunshineAPI) do(ctx context.Context, method, path, csrf string, in, out any) (int, error) {
@@ -47,7 +108,11 @@ func (s SunshineAPI) do(ctx context.Context, method, path, csrf string, in, out 
 		b, _ := json.Marshal(in)
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, s.base()+path, body)
+	endpoint, httpClient, err := s.endpoint(path)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
 		return 0, err
 	}
@@ -58,7 +123,7 @@ func (s SunshineAPI) do(ctx context.Context, method, path, csrf string, in, out 
 	if csrf != "" {
 		req.Header.Set("X-CSRF-Token", csrf)
 	}
-	resp, err := sunshineClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}

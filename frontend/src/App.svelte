@@ -4,6 +4,7 @@
     Self, SetName, Peers, History, Status, Scan, ForgetPeer, SendText,
     PickFiles, PickFolder, SendPaths, CancelTransfer, RetryTransfer, ReceiveDir, ChooseReceiveDir, OpenPath, RevealPath,
     LocalAddrs, Fingerprint, StartPair, CancelPair, AnswerPair, PendingPairs, Unpair, SendPasted,
+    SetControlPermission, AnswerControlPIN, ReceiveSettings, SetAskBeforeReceiving, PendingIncoming, AnswerIncoming,
     ClipboardStatus, SetClipboardSync, Background, SetKeepInTray, SetAutostart, SetAppMenu,
     StartControl, CancelControl, HostInfo, SetSunshineLogin, OpenURL, Version, ControlInfo,
     FirewallStatus, FixFirewall, MakeNetworkPrivate, CheckUpdate, InstallUpdate, InstallProgram, OpenSunshineSetup,
@@ -19,6 +20,7 @@
   import PasteDialog from './lib/PasteDialog.svelte'
   import ControlDialog from './lib/ControlDialog.svelte'
   import ControlPinDialog from './lib/ControlPinDialog.svelte'
+  import ReceiveDialog from './lib/ReceiveDialog.svelte'
   import PhoneDialog from './lib/PhoneDialog.svelte'
   import { pastedItems, pasteName, toBase64, baseName, MAX_PASTE_BYTES } from './lib/paste.js'
   import { osLabel, fmtTime, fmtShort, dayLabel } from './lib/format.js'
@@ -39,10 +41,12 @@
   let progress = $state({}) // message id -> { done, rate }
   let receiveDir = $state('')
   let localAddrs = $state([])
-  let dialog = $state(null) // 'connect' | 'settings' | 'unpair' | 'clear' | 'clear-all' | null
+  let dialog = $state(null) // 'connect' | 'settings' | 'unpair' | 'control-permission' | 'clear' | 'clear-all' | null
   let fingerprint = $state('')
   let pairOut = $state(null) // pairing we started: { kind: 'out', peerId, name, code, error }
   let pairIn = $state([]) // incoming requests waiting for an answer
+  let incoming = $state([]) // incoming files/folders waiting for consent
+  let receiveSettings = $state({ askBeforeAccepting: false })
   let pasted = $state(null) // items waiting for confirmation: { peerId, items }
   let attachOpen = $state(false)
   let clipStatus = $state({ enabled: false, available: false })
@@ -67,7 +71,7 @@
     const byId = new Map(peers.map((p) => [p.id, p]))
     for (const m of messages) {
       if (!byId.has(m.peerId)) {
-        byId.set(m.peerId, { id: m.peerId, name: m.peerName, os: '', addr: '', online: false, manual: false })
+        byId.set(m.peerId, { id: m.peerId, name: m.peerName, fingerprint: m.peerFingerprint, os: '', addr: '', online: false, manual: false })
       }
     }
     return [...byId.values()].sort(
@@ -100,11 +104,13 @@
 
   onMount(async () => {
     Language().then(setLanguage).catch(() => {})
-    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn, clipStatus, bg] = await Promise.all([
-      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(), ClipboardStatus(), Background(),
+    ;[self, peers, messages, serviceError, receiveDir, localAddrs, fingerprint, pairIn, incoming, receiveSettings, clipStatus, bg] = await Promise.all([
+      Self(), Peers(), History(), Status(), ReceiveDir(), LocalAddrs(), Fingerprint(), PendingPairs(), PendingIncoming(), ReceiveSettings(), ClipboardStatus(), Background(),
     ])
     localAddrs ??= []
     pairIn = (pairIn ?? []).map((r) => ({ ...r, kind: 'in' }))
+    incoming ??= []
+    receiveSettings ??= { askBeforeAccepting: false }
     peers ??= []
     messages ??= []
 
@@ -128,6 +134,7 @@
       }
     })
     EventsOn('control:pin', (p) => { controlPins = [...controlPins, p] })
+    EventsOn('control:pin-closed', (id) => { controlPins = controlPins.filter((p) => p.id !== id) })
     EventsOn('update:available', (u) => { updateInfo = u })
     EventsOn('phone:paired', (p) => {
       phonePairing = null
@@ -147,6 +154,8 @@
     })
     EventsOn('pair:request', (r) => { pairIn = [...pairIn, { ...r, kind: 'in' }] })
     EventsOn('pair:closed', (id) => { pairIn = pairIn.filter((r) => r.id !== id) })
+    EventsOn('incoming:request', (r) => { incoming = [...incoming, r] })
+    EventsOn('incoming:closed', (id) => { incoming = incoming.filter((r) => r.id !== id) })
     EventsOn('pair:result', (r) => {
       if (pairOut?.peerId !== r.peerId) return
       if (r.ok) {
@@ -334,6 +343,25 @@
       await Unpair(selected.id)
       showToast(t('toast.unpaired', { name: selected.name }))
     })
+  }
+
+  async function setControlPermission() {
+    if (!selected?.paired || selected.phone) return
+    const peer = selected
+    const allow = !peer.canControl
+    dialog = null
+    await run(async () => {
+      await SetControlPermission(peer.id, allow)
+      peers = peers.map((p) => p.id === peer.id ? { ...p, canControl: allow } : p)
+      showToast(t(allow ? 'toast.controlAllowed' : 'toast.controlRevoked', { name: peer.name }))
+    })
+  }
+
+  function answerIncoming(accept) {
+    const request = incoming[0]
+    if (!request) return
+    AnswerIncoming(request.id, accept)
+    incoming = incoming.slice(1)
   }
 
   // A paste with images or files opens a confirmation instead of pasting
@@ -554,6 +582,7 @@
         <div class="device-text">
           <div class="thread-name"><bdi>{selected.name}</bdi></div>
           <div class="muted small">
+            {#if selected.fingerprint}<bdi class="mono" dir="ltr">{selected.fingerprint}</bdi> · {/if}
             {#if selected.online}
               <span class="online-text">{t('common.online')}</span> · <bdi>{osLabel[selected.os] ?? selected.os}</bdi>{#if selected.addr}{' · '}<bdi class="ltr">{selected.addr}</bdi>{/if}
               {#if selected.paired}<span class="secure" title={t('thread.encryptedTitle')}> · <Icon name="lock" size={11} stroke={2.5} /> {t('thread.encrypted')}</span>{/if}
@@ -571,6 +600,11 @@
           {/if}
           {#if selected.paired && selected.online && !selected.phone}
             <button class="icon-btn" title={t('thread.control')} onclick={() => startControl(selected)}><Icon name="monitor" /></button>
+          {/if}
+          {#if selected.paired && !selected.phone}
+            <button class="icon-btn" class:danger={selected.canControl}
+              title={t(selected.canControl ? 'thread.revokeControl' : 'thread.allowControl', { name: selected.name })}
+              onclick={() => (dialog = 'control-permission')}><Icon name="shield" /></button>
           {/if}
           {#if messages.some((m) => m.peerId === selected.id)}
             <button class="icon-btn" title={t('thread.clear')} onclick={() => (dialog = 'clear')}><Icon name="eraser" /></button>
@@ -731,6 +765,7 @@
   <SettingsDialog
     {self}
     {receiveDir}
+    {receiveSettings}
     {localAddrs}
     {theme}
     language={i18n.pref}
@@ -779,6 +814,10 @@
     onClose={() => (dialog = null)}
     onRename={rename}
     onChangeDir={() => run(async () => (receiveDir = await ChooseReceiveDir()))}
+    onAskBeforeReceiving={(on) => run(async () => {
+      await SetAskBeforeReceiving(on)
+      receiveSettings = { askBeforeAccepting: on }
+    })}
     onOpenDir={() => run(() => OpenPath(receiveDir))}
     onCopy={copy}
     onTheme={setTheme}
@@ -816,10 +855,28 @@
   </div>
 {/if}
 
+{#if dialog === 'control-permission' && selected}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) dialog = null }}>
+    <div class="dialog confirm" role="dialog" aria-label={t(selected.canControl ? 'confirm.revokeControlTitle' : 'confirm.allowControlTitle', { name: selected.name })}>
+      <h2>{t(selected.canControl ? 'confirm.revokeControlTitle' : 'confirm.allowControlTitle', { name: selected.name })}</h2>
+      <p class="muted">{t(selected.canControl ? 'confirm.revokeControlText' : 'confirm.allowControlText', { name: selected.name })}</p>
+      <div class="dialog-actions">
+        <button class="btn secondary" onclick={() => (dialog = null)}>{t('common.cancel')}</button>
+        <button class="btn" class:danger={selected.canControl} class:primary={!selected.canControl} onclick={setControlPermission}>
+          {t(selected.canControl ? 'thread.revokeControlAction' : 'thread.allowControlAction')}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if pairIn.length}
   <PairDialog pair={pairIn[0]} onAnswer={answerPair} />
 {:else if pairOut}
   <PairDialog pair={pairOut} onCancel={closePairOut} onRetry={() => startPair({ id: pairOut.peerId, name: pairOut.name })} />
+{:else if incoming.length}
+  <ReceiveDialog request={incoming[0]} onAnswer={answerIncoming} />
 {/if}
 
 {#if phonePairing}
@@ -832,7 +889,16 @@
 {/if}
 
 {#if controlPins.length}
-  <ControlPinDialog request={controlPins[0]} onOpen={OpenURL} onCopy={copy} onClose={() => (controlPins = controlPins.slice(1))} />
+  <ControlPinDialog
+    request={controlPins[0]}
+    onOpen={OpenURL}
+    onCopy={copy}
+    onClose={() => (controlPins = controlPins.slice(1))}
+    onAnswer={(accept) => {
+      AnswerControlPIN(controlPins[0].id, accept)
+      controlPins = controlPins.slice(1)
+    }}
+  />
 {:else if control}
   <ControlDialog
     peer={control.peer}
