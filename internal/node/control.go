@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"dsync/internal/client"
 	"dsync/internal/config"
 	"dsync/internal/control"
+	"dsync/internal/identity"
 	"dsync/internal/proto"
 )
 
@@ -25,11 +27,16 @@ import (
 const (
 	// EventControl reports progress of StartControl.
 	EventControl = "control" // data: ControlState
-	// EventControlPIN asks the user here to type a PIN into Sunshine,
-	// because dsync has no Sunshine login to do it itself.
+	// EventControlPIN either asks the user here to type a PIN into Sunshine,
+	// or asks for consent before dsync submits it using a saved login.
 	EventControlPIN = "control:pin" // data: ControlPIN
+	// EventControlPINClosed closes a consent request after it was answered,
+	// timed out or canceled.
+	EventControlPINClosed = "control:pin-closed" // data: request id
 
-	pairWait = 2 * time.Minute
+	pairWait              = 2 * time.Minute
+	controlConsentTimeout = 60 * time.Second
+	maxPendingControlPINs = 3
 )
 
 // ControlState is one step of setting up remote control.
@@ -39,7 +46,8 @@ type ControlState struct {
 	// Code tells apart messages of the same step, so the window can show
 	// them in its own language: pair-auto, pair-manual and pair-retry while
 	// pairing; no-moonlight, no-sunshine, sunshine-start, sunshine-blocked,
-	// ask, configure, pair-unfinished and pair-timeout for errors.
+	// ask, configure, pair-unfinished, pair-timeout, pair-declined,
+	// pair-consent-timeout, pair-pending, pair-busy and pair-request for errors.
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"` // in English
 	Detail  string `json:"detail,omitempty"`  // the underlying error, for codes that include one
@@ -50,9 +58,33 @@ type ControlState struct {
 // ControlPIN is shown on the controlled computer when the PIN has to be
 // entered by hand.
 type ControlPIN struct {
-	PeerName string `json:"peerName"`
-	PIN      string `json:"pin"`
-	URL      string `json:"url"`
+	ID          string `json:"id,omitempty"`
+	PeerID      string `json:"peerId"`
+	PeerName    string `json:"peerName"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	PIN         string `json:"pin"`
+	URL         string `json:"url"`
+	// Automatic is true when a Sunshine login is available and dsync is
+	// waiting for local consent before submitting the PIN.
+	Automatic bool `json:"automatic"`
+}
+
+type pendingControlPIN struct {
+	peerID string
+	answer chan bool
+}
+
+// AnswerControlPIN accepts or declines an automatic Sunshine PIN request.
+func (n *Node) AnswerControlPIN(requestID string, accept bool) {
+	n.mu.Lock()
+	p := n.controlPINs[requestID]
+	n.mu.Unlock()
+	if p != nil {
+		select {
+		case p.answer <- accept:
+		default:
+		}
+	}
 }
 
 // HostInfo describes this computer's remote control setup, for settings.
@@ -62,7 +94,10 @@ type HostInfo struct {
 	SunshineInstalled bool   `json:"sunshineInstalled"`
 	SunshineRunning   bool   `json:"sunshineRunning"`
 	SunshineHint      string `json:"sunshineHint,omitempty"`
-	SunshineLogin     bool   `json:"sunshineLogin"` // a login is saved
+	SunshineLogin     bool   `json:"sunshineLogin"` // a login is available from the credential store
+	// SunshineLoginError reports an unavailable/missing OS credential store
+	// secret without preventing the rest of dsync from starting.
+	SunshineLoginError string `json:"sunshineLoginError,omitempty"`
 	// SunshineBlocked means this computer's firewall (ufw) keeps other
 	// computers from reaching Sunshine.
 	SunshineBlocked bool   `json:"sunshineBlocked"`
@@ -73,7 +108,7 @@ func (n *Node) sunshineAPI() (control.SunshineAPI, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	api := control.SunshineAPI{User: n.cfg.SunshineUser, Password: n.cfg.SunshinePassword, Base: n.cfg.SunshineWeb}
-	return api, api.User != ""
+	return api, api.User != "" && api.Password != "" && n.cfg.SunshineCredentialError() == nil
 }
 
 // HostInfo reports what this computer has for remote control.
@@ -89,6 +124,11 @@ func (n *Node) HostInfo() HostInfo {
 		SunshineBlocked:   sun && control.SunshineFirewallBlocked(),
 		SunshineURL:       fmt.Sprintf("https://localhost:%d", control.SunshineWebPort),
 	}
+	n.mu.Lock()
+	if err := n.cfg.SunshineCredentialError(); err != nil {
+		h.SunshineLoginError = err.Error()
+	}
+	n.mu.Unlock()
 	if !ml {
 		h.MoonlightHint = control.InstallHint("moonlight")
 	}
@@ -112,8 +152,8 @@ func (n *Node) StartLocalSunshine() error {
 }
 
 // SetSunshineLogin saves (after checking it works) the Sunshine web UI login
-// that lets paired devices finish remote control setup on their own. An
-// empty user removes it.
+// that lets dsync submit a PIN after the person here approves the request.
+// An empty user removes it.
 func (n *Node) SetSunshineLogin(ctx context.Context, user, password string) error {
 	if user != "" {
 		if base := n.cfg.SunshineWeb; base == "" {
@@ -134,8 +174,7 @@ func (n *Node) SetSunshineLogin(ctx context.Context, user, password string) erro
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.cfg.SunshineUser, n.cfg.SunshinePassword = user, password
-	return n.cfg.Save()
+	return n.cfg.SetSunshineCredentials(user, password)
 }
 
 // --- the controlled computer ---
@@ -247,8 +286,9 @@ func (n *Node) handleControlPIN(w http.ResponseWriter, r *http.Request, from con
 		return
 	}
 	name := n.learnPeer(from, req.FromName, 0, r.RemoteAddr)
+	fingerprint := identity.Short(from.Fingerprint)
 	manual := func() {
-		n.emit(EventControlPIN, ControlPIN{PeerName: name, PIN: req.PIN, URL: fmt.Sprintf("https://localhost:%d/pin", control.SunshineWebPort)})
+		n.emit(EventControlPIN, ControlPIN{PeerID: from.ID, PeerName: name, Fingerprint: fingerprint, PIN: req.PIN, URL: fmt.Sprintf("https://localhost:%d/pin", control.SunshineWebPort)})
 	}
 
 	api, login := n.sunshineAPI()
@@ -257,6 +297,60 @@ func (n *Node) handleControlPIN(w http.ResponseWriter, r *http.Request, from con
 		writeJSON(w, proto.ControlPINResult{})
 		return
 	}
+
+	// A saved Sunshine login must never turn the persistent peer permission
+	// into silent desktop access. Ask the person at this computer before
+	// submitting this particular PIN.
+	idb := make([]byte, 8)
+	if _, err := rand.Read(idb); err != nil {
+		http.Error(w, "could not create control request", http.StatusInternalServerError)
+		return
+	}
+	id := fmt.Sprintf("%x", idb)
+	pending := &pendingControlPIN{peerID: from.ID, answer: make(chan bool, 1)}
+	n.mu.Lock()
+	for _, existing := range n.controlPINs {
+		if existing.peerID == from.ID {
+			n.mu.Unlock()
+			http.Error(w, "a remote control request from this device is already waiting", http.StatusConflict)
+			return
+		}
+	}
+	if len(n.controlPINs) >= maxPendingControlPINs {
+		n.mu.Unlock()
+		http.Error(w, "too many remote control requests waiting", http.StatusTooManyRequests)
+		return
+	}
+	if _, exists := n.controlPINs[id]; exists {
+		n.mu.Unlock()
+		http.Error(w, "could not create a unique control request", http.StatusInternalServerError)
+		return
+	}
+	n.controlPINs[id] = pending
+	n.mu.Unlock()
+	defer func() {
+		n.mu.Lock()
+		delete(n.controlPINs, id)
+		n.mu.Unlock()
+		n.emit(EventControlPINClosed, id)
+	}()
+	n.emit(EventControlPIN, ControlPIN{ID: id, PeerID: from.ID, PeerName: name, Fingerprint: fingerprint, PIN: req.PIN, Automatic: true})
+
+	timer := time.NewTimer(controlConsentTimeout)
+	defer timer.Stop()
+	select {
+	case accept := <-pending.answer:
+		if !accept {
+			http.Error(w, "remote control request declined", http.StatusForbidden)
+			return
+		}
+	case <-timer.C:
+		http.Error(w, "remote control request timed out", http.StatusRequestTimeout)
+		return
+	case <-r.Context().Done():
+		return
+	}
+
 	fromIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 	err := api.SubmitPIN(r.Context(), req.PIN, "dsync: "+name, fromIP, 40*time.Second)
 	if err != nil {
@@ -537,6 +631,8 @@ func (n *Node) adjustPointerWhile(step int, done <-chan struct{}) {
 // PIN over dsync so nobody has to type it on the other computer (if it has
 // a Sunshine login saved), or showing it there otherwise.
 func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Peer, host, addr, fp string, auto bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	pin := randomPIN()
 	code, msg := "pair-auto", "Setting up remote control with "+peer.Name+" (only needed once)…"
 	if !auto {
@@ -558,15 +654,18 @@ func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Pee
 		case <-exited:
 		default:
 			cmd.Process.Kill() // close Moonlight's pairing window
+			<-exited           // reap it before reporting the result
 		}
 	}()
 
+	type pinResult struct {
+		res proto.ControlPINResult
+		err error
+	}
+	results := make(chan pinResult, 1)
 	go func() {
 		res, err := n.cl.ControlPIN(ctx, addr, fp, proto.ControlPINRequest{PIN: pin, FromName: n.Self().Name})
-		if err == nil && !res.Auto && auto {
-			n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Code: "pair-retry", Detail: res.Error, PIN: pin,
-				Message: "Sunshine on " + peer.Name + " didn't take the PIN automatically (" + res.Error + "). Enter it there by hand."})
-		}
+		results <- pinResult{res: res, err: err}
 	}()
 
 	deadline := time.Now().Add(pairWait)
@@ -574,6 +673,29 @@ func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Pee
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case result := <-results:
+			results = nil // only one PIN response is expected
+			if result.err != nil {
+				code, msg := "pair-request", "could not submit the pairing PIN to "+peer.Name
+				var status *client.StatusError
+				if errors.As(result.err, &status) {
+					switch status.Code {
+					case http.StatusForbidden:
+						code, msg = "pair-declined", "remote control request declined on "+peer.Name
+					case http.StatusRequestTimeout:
+						code, msg = "pair-consent-timeout", "remote control approval timed out on "+peer.Name
+					case http.StatusConflict:
+						code, msg = "pair-pending", "a remote control request is already waiting on "+peer.Name
+					case http.StatusTooManyRequests:
+						code, msg = "pair-busy", "too many remote control requests are waiting on "+peer.Name
+					}
+				}
+				return &controlError{msg: msg, code: code, detail: result.err.Error(), err: result.err}
+			}
+			if !result.res.Auto && auto {
+				n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Code: "pair-retry", Detail: result.res.Error, PIN: pin,
+					Message: "Sunshine on " + peer.Name + " didn't take the PIN automatically (" + result.res.Error + "). Enter it there by hand."})
+			}
 		case <-exited:
 		case <-time.After(2 * time.Second):
 		}

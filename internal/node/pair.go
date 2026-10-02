@@ -37,11 +37,15 @@ const (
 
 // PairRequest is an incoming request waiting for the user.
 type PairRequest struct {
-	ID     string `json:"id"`
-	PeerID string `json:"peerId"`
-	Name   string `json:"name"`
-	OS     string `json:"os"`
-	Code   string `json:"code"`
+	ID                  string `json:"id"`
+	PeerID              string `json:"peerId"`
+	Name                string `json:"name"`
+	OS                  string `json:"os"`
+	Code                string `json:"code"`
+	Fingerprint         string `json:"fingerprint"`
+	AlreadyPaired       bool   `json:"alreadyPaired,omitempty"`
+	KeyChanged          bool   `json:"keyChanged,omitempty"`
+	ExistingFingerprint string `json:"existingFingerprint,omitempty"`
 }
 
 // PairResult is the outcome of a pairing this device started.
@@ -82,6 +86,15 @@ func (n *Node) StartPair(ctx context.Context, peerID string) (string, error) {
 	if d.ID != peerID {
 		return "", errors.New("a different device answered at that address; scan again")
 	}
+	n.mu.Lock()
+	existing, paired := n.cfg.TrustedByID(peerID)
+	n.mu.Unlock()
+	if paired {
+		if existing.Fingerprint != fp {
+			return "", errors.New("this device id is already paired with a different key; unpair it first")
+		}
+		return "", errors.New("this device is already paired")
+	}
 	code := identity.PairCode(n.id.Fingerprint, fp)
 
 	pctx, cancel := context.WithTimeout(ctx, pairTimeout+10*time.Second)
@@ -99,8 +112,10 @@ func (n *Node) StartPair(ctx context.Context, peerID string) (string, error) {
 		n.mu.Lock()
 		delete(n.pairing, peerID)
 		if err == nil {
-			n.cfg.Trust(config.TrustedPeer{ID: peerID, Name: resp.Name, Fingerprint: fp})
-			err = n.cfg.Save()
+			err = n.cfg.Trust(config.TrustedPeer{ID: peerID, Name: resp.Name, Fingerprint: fp})
+			if err == nil {
+				err = n.cfg.Save()
+			}
 		}
 		n.mu.Unlock()
 		res := PairResult{PeerID: peerID, OK: err == nil}
@@ -175,6 +190,14 @@ func (n *Node) handlePair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n.mu.Lock()
+	existing, alreadyPaired := n.cfg.TrustedByID(req.FromID)
+	keyChanged := alreadyPaired && existing.Fingerprint != fp
+	if byKey, ok := n.cfg.TrustedByFingerprint(fp); ok && byKey.ID != req.FromID {
+		keyChanged = true
+		if !alreadyPaired {
+			existing, alreadyPaired = byKey, true
+		}
+	}
 	if len(n.pending) >= maxPendingPairs {
 		n.mu.Unlock()
 		http.Error(w, "too many pairing requests waiting", http.StatusTooManyRequests)
@@ -191,7 +214,12 @@ func (n *Node) handlePair(w http.ResponseWriter, r *http.Request) {
 	rand.Read(idb)
 	pr := PairRequest{
 		ID: hex.EncodeToString(idb), PeerID: req.FromID, Name: req.FromName, OS: req.OS,
-		Code: identity.PairCode(n.id.Fingerprint, fp),
+		Code: identity.PairCode(n.id.Fingerprint, fp), Fingerprint: identity.Short(fp),
+		AlreadyPaired: alreadyPaired, KeyChanged: keyChanged,
+	}
+	if alreadyPaired {
+		pr.Name = existing.Name
+		pr.ExistingFingerprint = identity.Short(existing.Fingerprint)
 	}
 	p := &pendingPair{req: pr, answer: make(chan bool, 1)}
 	n.pending[pr.ID] = p
@@ -219,13 +247,29 @@ func (n *Node) handlePair(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		return
 	}
+	if pr.KeyChanged {
+		http.Error(w, "this identity is already paired with a different device id or key; unpair it first", http.StatusConflict)
+		return
+	}
 
-	t := config.TrustedPeer{ID: req.FromID, Name: req.FromName, Fingerprint: fp}
 	n.mu.Lock()
-	n.cfg.Trust(t)
-	err := n.cfg.Save()
+	t := config.TrustedPeer{ID: req.FromID, Name: req.FromName, Fingerprint: fp}
+	if current, ok := n.cfg.TrustedByID(req.FromID); ok && current.Fingerprint == fp {
+		// Reconfirming the same key never changes its trusted display name or
+		// permissions from self-asserted request data.
+		t = current
+	}
+	trustErr := n.cfg.Trust(t)
+	var saveErr error
+	if trustErr == nil {
+		saveErr = n.cfg.Save()
+	}
 	n.mu.Unlock()
-	if err != nil {
+	if trustErr != nil {
+		http.Error(w, trustErr.Error(), http.StatusConflict)
+		return
+	}
+	if saveErr != nil {
 		http.Error(w, "could not save pairing", http.StatusInternalServerError)
 		return
 	}

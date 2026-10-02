@@ -59,7 +59,11 @@ func (c *Client) SendFile(ctx context.Context, addr, fp string, h FileHeader, f 
 	}
 	var off proto.OffsetResponse
 	offCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	offReq := proto.OffsetRequest{TransferID: h.TransferID, Size: h.Size, FolderID: h.FolderID, FolderRun: h.FolderRun, RelPath: h.RelPath}
+	offReq := proto.OffsetRequest{
+		TransferID: h.TransferID, Size: h.Size, Name: h.Name,
+		FolderID: h.FolderID, FolderRun: h.FolderRun, RelPath: h.RelPath,
+		FolderSize: h.FolderSize, FolderFiles: h.FolderFiles,
+	}
 	err := c.postJSON(offCtx, addr, fp, "/api/v1/file/offset", offReq, &off, http.StatusOK)
 	cancel()
 	if err != nil {

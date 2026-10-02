@@ -83,6 +83,7 @@ To unpair, open the computer's conversation, tap the gear, then **Forget this co
 
 ```sh
 npm run test:crypto     # the sealed-envelope code against the protocol's test vectors
+npm run test:network    # the cleartext local-address policy
 npx tsc --noEmit        # type check
 npx expo-doctor         # dependency / config check
 ```
@@ -92,6 +93,14 @@ Code layout:
 - `src/crypto.ts` – base64, UTF-8, secretbox envelopes (no React Native imports, tested with Node)
 - `src/random.ts` – seeds tweetnacl's random numbers from `expo-crypto`
 - `src/dsync.ts` – the protocol: pairing URL, sealed requests, pair / sync / text / upload / download / unpair
+- `src/network.ts` – the cleartext transport allowlist for loopback, private, and link-local IP addresses
 - `src/storage.ts` – paired computers in secure storage
 - `src/store.ts` – app state, polling, sending and downloads
 - `src/screens/` – computers list, QR scanner, conversation, computer settings
+
+The phone protocol uses message-level encryption over HTTP on the LAN. The app only
+constructs requests for literal loopback, private/ULA, or link-local addresses. iOS uses
+`NSAllowsLocalNetworking` without the broader `NSAllowsArbitraryLoads` exception. Android's
+Network Security Configuration can grant cleartext exceptions to fixed domain names, but
+not to changing RFC1918/ULA address ranges, so `usesCleartextTraffic` must remain enabled
+for the app; the code-level destination check is the enforceable Android restriction.

@@ -5,11 +5,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +22,7 @@ import (
 
 	"dsync/internal/client"
 	"dsync/internal/config"
+	"dsync/internal/proto"
 )
 
 // testNode is a node serving on a random local port.
@@ -25,6 +30,38 @@ type testNode struct {
 	*Node
 	addr string
 	srv  *http.Server
+}
+
+type testCredentialStore struct {
+	mu      sync.Mutex
+	secrets map[string]string
+}
+
+func (s *testCredentialStore) key(service, account string) string { return service + "\x00" + account }
+func (s *testCredentialStore) Set(service, account, secret string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.secrets[s.key(service, account)] = secret
+	return nil
+}
+func (s *testCredentialStore) Get(service, account string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	secret, ok := s.secrets[s.key(service, account)]
+	if !ok {
+		return "", config.ErrCredentialNotFound
+	}
+	return secret, nil
+}
+func (s *testCredentialStore) Delete(service, account string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := s.key(service, account)
+	if _, ok := s.secrets[key]; !ok {
+		return config.ErrCredentialNotFound
+	}
+	delete(s.secrets, key)
+	return nil
 }
 
 func newTestNode(t *testing.T, name string) testNode {
@@ -36,7 +73,7 @@ func newTestNode(t *testing.T, name string) testNode {
 func newTestNodeWith(t *testing.T, name string, emit func(string, any)) testNode {
 	t.Helper()
 	dir := t.TempDir()
-	cfg, err := config.LoadFrom(dir)
+	cfg, err := config.LoadFromWithCredentialStore(dir, &testCredentialStore{secrets: map[string]string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +224,270 @@ func partFiles(t *testing.T, n *Node) []string {
 	return out
 }
 
+func directFileRequest(size int64, tid string, body io.Reader) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/file", body)
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Header.Set(proto.HeaderFromName, "sender")
+	r.Header.Set(proto.HeaderFromPort, "1234")
+	r.Header.Set(proto.HeaderFileName, "data.bin")
+	r.Header.Set(proto.HeaderFileSize, strconv.FormatInt(size, 10))
+	r.Header.Set(proto.HeaderTransferID, tid)
+	r.Header.Set(proto.HeaderOffset, "0")
+	return r
+}
+
+func TestWriteIncomingRejectsOversizeBeforeWritingExtraByte(t *testing.T) {
+	part := filepath.Join(t.TempDir(), "part")
+	f, err := os.OpenFile(part, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcde"))
+	_, err = writeIncoming(context.Background(), r, http.NewResponseController(httptest.NewRecorder()), f, 0, 4,
+		func() (string, error) { t.Fatal("oversized file reached destination"); return "", nil }, func(int64) {})
+	if !errors.Is(err, errByteCount) {
+		t.Fatalf("want byte-count error, got %v", err)
+	}
+	if st, statErr := os.Stat(part); statErr != nil || st.Size() != 4 {
+		t.Fatalf("part size = %v (err %v), want hard cap of 4", st, statErr)
+	}
+}
+
+func TestReceiveFileDeletesByteCountFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int64
+		body string
+	}{
+		{name: "short", size: 5, body: "abcd"},
+		{name: "oversize", size: 3, body: "abcd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := newTestNode(t, "receiver")
+			tid := strings.Repeat("ab", 16)
+			w := httptest.NewRecorder()
+			n.receiveFile(w, directFileRequest(tc.size, tid, strings.NewReader(tc.body)), config.TrustedPeer{ID: "peer", Name: "sender"})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status %d, want 400; body %q", w.Code, w.Body.String())
+			}
+			if _, err := os.Stat(n.peerPartPath("peer", tid)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("unusable part remains: %v", err)
+			}
+		})
+	}
+}
+
+func TestReceiveFileChecksDiskSpaceWithoutOffsetRequest(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	n.freeSpace = func(string) (int64, error) { return diskReserve + 3, nil }
+	tid := strings.Repeat("cd", 16)
+	w := httptest.NewRecorder()
+	n.receiveFile(w, directFileRequest(4, tid, strings.NewReader("data")), config.TrustedPeer{ID: "peer", Name: "sender"})
+	if w.Code != http.StatusInsufficientStorage {
+		t.Fatalf("status %d, want 507; body %q", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(n.peerPartPath("peer", tid)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("disk-space refusal created a part: %v", err)
+	}
+}
+
+func TestReceiveFileCapsAccumulatedPeerParts(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxPeerPartialFiles; i++ {
+		tid := fmt.Sprintf("%032x", i+1)
+		if err := os.WriteFile(n.peerPartPath("peer", tid), []byte{0}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tid := strings.Repeat("ef", 16)
+	w := httptest.NewRecorder()
+	n.receiveFile(w, directFileRequest(1, tid, strings.NewReader("x")), config.TrustedPeer{ID: "peer", Name: "sender"})
+	if w.Code != http.StatusInsufficientStorage {
+		t.Fatalf("status %d, want 507; body %q", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(n.peerPartPath("peer", tid)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("peer cap created another part: %v", err)
+	}
+}
+
+func TestReceiveFileAllowsTransferLargerThanPeerQuota(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	n.freeSpace = func(string) (int64, error) { return maxPeerPartialBytes + diskReserve + 1, nil }
+	tid := strings.Repeat("fa", 16)
+	w := httptest.NewRecorder()
+	n.receiveFile(w, directFileRequest(maxPeerPartialBytes+1, tid, strings.NewReader("x")), config.TrustedPeer{ID: "peer", Name: "sender"})
+	// The short body reaches byte-count validation after quota admission.
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "received byte count does not match declared size") {
+		t.Fatalf("large active transfer did not reach byte-count validation: %d, %s", w.Code, w.Body.String())
+	}
+	if history := n.History(); len(history) != 1 || history[0].File.Size != (1<<30)+1 {
+		t.Fatalf("large transfer was not admitted: %+v", history)
+	}
+}
+
+func TestPeerPartQuotaCountsAbandonedBytesOnDisk(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	n.freeSpace = func(string) (int64, error) { return 8 << 30, nil }
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := n.peerPartPath("peer", strings.Repeat("ad", 16))
+	if err := os.WriteFile(abandoned, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePartMeta(abandoned, 2<<30); err != nil {
+		t.Fatal(err)
+	}
+	active := n.peerPartPath("peer", strings.Repeat("ac", 16))
+	release, err := n.reservePeerPart("peer", active, 2<<30, 0)
+	if err != nil {
+		t.Fatalf("one abandoned byte blocked large active transfer: %v", err)
+	}
+	release()
+	// Sparse files exercise the actual-byte limit without a large fixture.
+	if err := os.Truncate(abandoned, (1<<30)+1); err != nil {
+		t.Fatal(err)
+	}
+	if release, err = n.reservePeerPart("peer", active, 2<<30, 0); !errors.Is(err, errPartQuota) {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("abandoned bytes above limit admitted transfer: %v", err)
+	}
+	// Resuming the oversized part makes it active, allowing it to finish.
+	release, err = n.reservePeerPart("peer", abandoned, 2<<30, (1<<30)+1)
+	if err != nil {
+		t.Fatalf("could not resume oversized abandoned part: %v", err)
+	}
+	release()
+}
+
+func TestPeerPartDeclaredSizeCannotGrow(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tid := strings.Repeat("bc", 16)
+	part := n.peerPartPath("peer", tid)
+	if err := os.WriteFile(part, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePartMeta(part, 4); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	n.receiveFile(w, directFileRequest(5, tid, strings.NewReader("12345")), config.TrustedPeer{ID: "peer", Name: "sender"})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("grown declaration status %d, want 409: %s", w.Code, w.Body.String())
+	}
+	if st, err := os.Stat(part); err != nil || st.Size() != 1 {
+		t.Fatalf("bound part changed: %v, err %v", st, err)
+	}
+
+	// The binding is persisted, so a new Node instance enforces it too.
+	restarted, err := New(n.cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release, err := restarted.reservePeerPart("peer", part, 5, 1); !errors.Is(err, errPartConflict) {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("restart accepted larger declaration: %v", err)
+	}
+}
+
+func TestDiskSpaceReservationsAreAtomicForSamePeer(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	n.freeSpace = func(string) (int64, error) { return diskReserve + (1 << 30), nil }
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const attempts = 4
+	start := make(chan struct{})
+	releases := make(chan func(), attempts)
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		i := i
+		go func() {
+			<-start
+			part := n.peerPartPath("peer", fmt.Sprintf("%032x", i+100))
+			release, err := n.reservePeerPart("peer", part, 1<<29, 0)
+			if release != nil {
+				releases <- release
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	accepted := 0
+	for i := 0; i < attempts; i++ {
+		if err := <-results; err == nil {
+			accepted++
+		} else if !errors.Is(err, errPartQuota) {
+			t.Fatalf("unexpected reservation error: %v", err)
+		}
+	}
+	close(releases)
+	for release := range releases {
+		release()
+	}
+	if accepted != 2 {
+		t.Fatalf("accepted %d 512 MiB transfers with 1 GiB available, want exactly 2", accepted)
+	}
+}
+
+func TestDiskSpaceReservationsAreAtomicAcrossPeers(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	n.freeSpace = func(string) (int64, error) { return diskReserve + 100, nil }
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	release, err := n.reservePeerPart("peer-a", n.peerPartPath("peer-a", strings.Repeat("01", 16)), 80, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	release2, err := n.reservePeerPart("peer-b", n.peerPartPath("peer-b", strings.Repeat("02", 16)), 80, 0)
+	if release2 != nil {
+		release2()
+	}
+	if !errors.Is(err, errPartQuota) {
+		t.Fatalf("second disk reservation error = %v, want quota refusal", err)
+	}
+}
+
+func TestCleanPartsLoopRemovesPartsThatBecomeStale(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	part := filepath.Join(n.ReceiveDir(), partPrefix+"stale"+partSuffix)
+	if err := os.WriteFile(part, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go n.cleanPartsLoop(ctx, 10*time.Millisecond)
+	// It is initially fresh, so the loop's startup pass leaves it alone.
+	time.Sleep(20 * time.Millisecond)
+	old := time.Now().Add(-partMaxAge - time.Hour)
+	if err := os.Chtimes(part, old, old); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(part); errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("periodic cleanup did not remove stale part")
+}
+
 func TestSendResumesAfterConnectionDrop(t *testing.T) {
 	fastRetries(t)
 	a, b := newTestNode(t, "A"), newTestNode(t, "B")
@@ -329,7 +630,7 @@ func TestNewAttemptReplacesStalledOne(t *testing.T) {
 	go a.cl.SendFile(context.Background(), b.addr, b.id.Fingerprint, h, stalled, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if st, err := os.Stat(b.partPath(a.cfg.ID, h.TransferID)); err == nil && st.Size() >= 6<<20 {
+		if st, err := os.Stat(b.peerPartPath(a.cfg.ID, h.TransferID)); err == nil && st.Size() >= 6<<20 {
 			break
 		}
 		if time.Now().After(deadline) {

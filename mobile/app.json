@@ -13,8 +13,7 @@
         "NSCameraUsageDescription": "dsync uses the camera to scan the pairing code shown on your computer or another phone.",
         "NSLocalNetworkUsageDescription": "dsync talks to dsync on your computers and other phones over the local network.",
         "NSAppTransportSecurity": {
-          "NSAllowsLocalNetworking": true,
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsLocalNetworking": true
         },
         "CFBundleAllowMixedLocalizations": true
       }

@@ -35,10 +35,14 @@ type Config struct {
 	TrayHintShown bool `json:"tray_hint_shown,omitempty"`
 	// ClipboardSync shares the clipboard with paired devices.
 	ClipboardSync bool `json:"clipboard_sync,omitempty"`
-	// Sunshine web UI login, if saved, lets paired devices finish remote
-	// control setup here on their own. SunshineWeb overrides its address.
+	// AskBeforeReceiving requires local approval before a paired computer can
+	// start an incoming file or folder transfer.
+	AskBeforeReceiving bool `json:"ask_before_receiving,omitempty"`
+	// Sunshine web UI login, if saved, lets dsync finish remote-control
+	// setup after local approval. The password is held only in the OS
+	// credential store; SunshineWeb overrides the API address.
 	SunshineUser     string `json:"sunshine_user,omitempty"`
-	SunshinePassword string `json:"sunshine_password,omitempty"`
+	SunshinePassword string `json:"-"`
 	SunshineWeb      string `json:"sunshine_web,omitempty"`
 	// PointerRestore is the pointer speed to put back after remote
 	// control, kept here in case dsync quits while controlling.
@@ -48,7 +52,9 @@ type Config struct {
 	// Trusted are the paired devices. Only they may send us data.
 	Trusted []TrustedPeer `json:"trusted,omitempty"`
 
-	dir string // where this config lives
+	dir                   string          // where this config lives
+	credentials           CredentialStore // OS keychain, injectable in tests
+	sunshineCredentialErr error           // non-fatal read failure at startup
 }
 
 // TrustedPeer is a paired device, identified by its key fingerprint.
@@ -56,6 +62,9 @@ type TrustedPeer struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Fingerprint string `json:"fingerprint"`
+	// CanControl is a separate, explicitly granted capability. Pairing by
+	// itself only permits sharing text and files.
+	CanControl bool `json:"can_control,omitempty"`
 }
 
 // Phone is a paired phone. Key is the base64 secretbox key from the QR code.
@@ -96,12 +105,23 @@ func (c *Config) TrustedByID(id string) (TrustedPeer, bool) {
 	return TrustedPeer{}, false
 }
 
-// Trust adds or updates a paired device. A device id or key can only belong
-// to one entry, so old entries for either are replaced.
-func (c *Config) Trust(t TrustedPeer) {
-	c.Untrust(t.ID)
-	c.Trusted = slices.DeleteFunc(c.Trusted, func(x TrustedPeer) bool { return x.Fingerprint == t.Fingerprint })
+// Trust adds or updates a paired device. An established id/key binding cannot
+// be replaced: the user must explicitly unpair it first.
+func (c *Config) Trust(t TrustedPeer) error {
+	for i, x := range c.Trusted {
+		if x.ID == t.ID && x.Fingerprint != t.Fingerprint {
+			return fmt.Errorf("device id %s is already paired with a different key; unpair it first", t.ID)
+		}
+		if x.Fingerprint == t.Fingerprint && x.ID != t.ID {
+			return fmt.Errorf("device key is already paired as %s; unpair it first", x.ID)
+		}
+		if x.ID == t.ID {
+			c.Trusted[i] = t
+			return nil
+		}
+	}
 	c.Trusted = append(c.Trusted, t)
+	return nil
 }
 
 // Untrust removes the paired device with this id.
@@ -142,14 +162,30 @@ func Load() (*Config, error) {
 
 // LoadFrom reads the config from dir, creating it on first run.
 func LoadFrom(dir string) (*Config, error) {
+	return LoadFromWithCredentialStore(dir, systemCredentialStore{})
+}
+
+// LoadFromWithCredentialStore is LoadFrom with an explicit credential store.
+// It is useful for tests and headless environments with their own keychain
+// adapter. A nil store uses the operating system credential store.
+func LoadFromWithCredentialStore(dir string, credentials CredentialStore) (*Config, error) {
+	if credentials == nil {
+		credentials = systemCredentialStore{}
+	}
 	path := filepath.Join(dir, "config.json")
 
-	c := Config{dir: dir}
+	c := Config{dir: dir, credentials: credentials}
+	var legacy struct {
+		SunshinePassword string `json:"sunshine_password"`
+	}
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
 		if err := json.Unmarshal(data, &c); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		if err := json.Unmarshal(data, &legacy); err != nil {
+			return nil, fmt.Errorf("parse legacy credentials in %s: %w", path, err)
 		}
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, err
@@ -173,6 +209,11 @@ func LoadFrom(dir string) (*Config, error) {
 		c.Port = proto.DefaultHTTPPort
 		changed = true
 	}
+	migrated, err := c.loadSunshineCredential(legacy.SunshinePassword)
+	if err != nil {
+		return nil, err
+	}
+	changed = changed || migrated
 	if changed {
 		if err := c.Save(); err != nil {
 			return nil, err
@@ -189,6 +230,38 @@ func (c *Config) Save() error {
 	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		return err
 	}
-	out, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(filepath.Join(c.dir, "config.json"), out, 0o600)
+	out, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(c.dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			tmp.Close()
+			os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(out); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	path := filepath.Join(c.dir, "config.json")
+	if err := replaceFile(tmpPath, path); err != nil {
+		return err
+	}
+	keep = true
+	return syncDir(c.dir)
 }

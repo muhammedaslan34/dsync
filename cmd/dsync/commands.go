@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -15,7 +14,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -35,37 +33,66 @@ func cmdServe(cfg *config.Config, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Pairing requests are answered by typing y or n; the last one shown is
-	// the one answered.
-	var lastPair atomic.Value
+	// All interactive requests share one stdin queue. That keeps an answer
+	// attached to the prompt currently on screen when several peers ask at
+	// once, and lets timeout/close events remove stale queued prompts.
+	prompts := newServePrompter(os.Stdout)
+	var n *node.Node
 	n, err := node.New(cfg, func(event string, data any) {
 		switch event {
 		case node.EventMessage:
 			if m := data.(node.Message); m.Incoming && m.File == nil {
-				fmt.Printf("\n[%s] text from %s:\n%s\n", time.Now().Format("15:04:05"), m.PeerName, m.Text)
+				prompts.notice(fmt.Sprintf("[%s] text from %s:\n%s", time.Now().Format("15:04:05"), m.PeerName, m.Text))
 			}
 		case node.EventMessageUpdate:
 			if m := data.(node.Message); m.Incoming && m.File != nil && m.File.Status != node.StatusActive {
-				fmt.Printf("[%s] file from %s: %s (%s)\n", time.Now().Format("15:04:05"), m.PeerName, m.File.Name, m.File.Status)
+				prompts.notice(fmt.Sprintf("[%s] file from %s: %s (%s)", time.Now().Format("15:04:05"), m.PeerName, m.File.Name, m.File.Status))
 			}
 		case node.EventPairRequest:
 			r := data.(node.PairRequest)
-			lastPair.Store(r.ID)
-			fmt.Printf("\n%s wants to pair. Code: %s\nAccept only if %s shows the same code. Accept? [y/N] ", r.Name, r.Code, r.Name)
+			warning := ""
+			if r.KeyChanged {
+				warning = "\nWARNING: this device id or key conflicts with an existing pairing; unpair the old device first."
+			}
+			prompts.ask(servePrompt{
+				kind: promptPair, id: r.ID,
+				text:   fmt.Sprintf("%s wants to pair. Code: %s\nFingerprint: %s%s\nAccept only if the other device shows the same code. Accept? [y/N] ", r.Name, r.Code, r.Fingerprint, warning),
+				answer: func(accept bool) { n.AnswerPair(r.ID, accept) },
+			})
+		case node.EventPairClosed:
+			prompts.close(promptPair, data.(string))
+		case node.EventIncomingRequest:
+			r := data.(node.IncomingRequest)
+			kind, details := "file", fmt.Sprintf("%d bytes", r.Size)
+			if r.Folder {
+				kind, details = "folder", fmt.Sprintf("%d files, %d bytes", r.Files, r.Size)
+			}
+			prompts.ask(servePrompt{
+				kind: promptIncoming, id: r.ID,
+				text:   fmt.Sprintf("%s (%s) wants to send the %s %q (%s).\nAccept? [y/N] ", r.PeerName, r.Fingerprint, kind, r.Name, details),
+				answer: func(accept bool) { n.AnswerIncoming(r.ID, accept) },
+			})
+		case node.EventIncomingClosed:
+			prompts.close(promptIncoming, data.(string))
+		case node.EventControlPIN:
+			r := data.(node.ControlPIN)
+			if !r.Automatic {
+				prompts.notice(fmt.Sprintf("%s (%s) is requesting remote control. Enter PIN %s in Sunshine: %s", r.PeerName, r.Fingerprint, r.PIN, r.URL))
+				break
+			}
+			prompts.ask(servePrompt{
+				kind: promptControl, id: r.ID,
+				text:   fmt.Sprintf("%s (%s) is requesting remote control of this computer.\nAllow this one-time PIN submission? [y/N] ", r.PeerName, r.Fingerprint),
+				answer: func(accept bool) { n.AnswerControlPIN(r.ID, accept) },
+			})
+		case node.EventControlPINClosed:
+			prompts.close(promptControl, data.(string))
 		}
 	})
 	if err != nil {
 		return err
 	}
-	go func() {
-		sc := bufio.NewScanner(os.Stdin)
-		for sc.Scan() {
-			if id, _ := lastPair.Load().(string); id != "" {
-				n.AnswerPair(id, strings.EqualFold(strings.TrimSpace(sc.Text()), "y"))
-				lastPair.Store("")
-			}
-		}
-	}()
+	prompts.start(ctx, os.Stdin)
 	self := n.Self()
 	log.Printf("serving as %q (key %s): tcp :%d, discovery udp :%d", self.Name, n.Fingerprint(), self.Port, proto.DiscoveryPort)
 	return n.Run(ctx)
@@ -73,7 +100,7 @@ func cmdServe(cfg *config.Config, args []string) error {
 
 func cmdPair(cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
-	to := fs.String("to", "", "device name or id prefix")
+	to := fs.String("to", "", "device id prefix from `dsync devices`")
 	addr := fs.String("addr", "", "pair directly with HOST[:PORT], skipping discovery")
 	fs.Parse(args)
 
@@ -98,7 +125,9 @@ func cmdPair(cfg *config.Config, args []string) error {
 	if err != nil {
 		return fmt.Errorf("pairing failed: %w", err)
 	}
-	cfg.Trust(config.TrustedPeer{ID: t.id, Name: resp.Name, Fingerprint: t.fp})
+	if err := cfg.Trust(config.TrustedPeer{ID: t.id, Name: resp.Name, Fingerprint: t.fp}); err != nil {
+		return err
+	}
 	if err := cfg.Save(); err != nil {
 		return err
 	}
@@ -123,10 +152,12 @@ func cmdDevices(cfg *config.Config, args []string) error {
 	fmt.Fprintln(tw, "NAME\tOS\tADDRESS\tPAIRED\tID")
 	for _, p := range peers {
 		paired := "no"
-		if _, ok := cfg.TrustedByID(p.ID); ok {
+		name := p.Name
+		if trusted, ok := cfg.TrustedByID(p.ID); ok {
 			paired = "yes"
+			name = trusted.Name
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.OS, p.Addr(), paired, p.ID)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, p.OS, p.Addr(), paired, p.ID)
 	}
 	return tw.Flush()
 }
@@ -188,7 +219,11 @@ type target struct {
 func resolvePaired(cfg *config.Config, cl *client.Client, to, addr string) (target, error) {
 	t, err := resolveTarget(cfg, cl, to, addr)
 	if err == nil && !t.paired {
-		err = fmt.Errorf("not paired with %s; run `dsync pair --to %q` or pair in the app", t.name, t.name)
+		prefix := t.id
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		err = fmt.Errorf("not paired with %s; run `dsync pair --to %s` or pair in the app", t.name, prefix)
 	}
 	return t, err
 }
@@ -215,7 +250,7 @@ func resolveTarget(cfg *config.Config, cl *client.Client, to, addr string) (targ
 		if trusted.Fingerprint != fp {
 			return target{}, fmt.Errorf("%s: %w", d.Name, client.ErrIdentityChanged)
 		}
-		t.paired = true
+		t.paired, t.name = true, trusted.Name
 	}
 	return t, nil
 }
@@ -227,6 +262,9 @@ func discoverAddr(cfg *config.Config, to string) (string, error) {
 	}
 	var matches []discovery.Peer
 	for _, p := range peers {
+		if trusted, ok := cfg.TrustedByID(p.ID); ok {
+			p.Name = trusted.Name
+		}
 		if to == "" || strings.EqualFold(p.Name, to) || strings.HasPrefix(p.ID, to) {
 			matches = append(matches, p)
 		}

@@ -5,7 +5,7 @@
   import { t, fmtList, languages } from './i18n.svelte.js'
 
   let {
-    self, receiveDir, localAddrs, theme, language = 'system', onLanguage, fingerprint, pairedCount, clipStatus, onClipboard,
+    self, receiveDir, receiveSettings, onAskBeforeReceiving, localAddrs, theme, language = 'system', onLanguage, fingerprint, pairedCount, clipStatus, onClipboard,
     bg, onBackground, setters, hostInfo, onSunshineLogin, onOpenURL, version,
     firewall, onFixFirewall, onMakePrivate, onClearAll, onConnectPhone, phones = [],
     updateInfo, updateProgress, onCheckUpdate, onInstallUpdate, onInstallProgram, onSunshineSetup, onAllowSunshine,
@@ -35,6 +35,18 @@
     try {
       await onSunshineLogin(sunUser.trim(), sunPass)
       sunPass = ''
+    } catch (err) {
+      sunError = String(err)
+    } finally {
+      sunBusy = false
+    }
+  }
+
+  async function removeSunshine() {
+    sunBusy = true
+    sunError = ''
+    try {
+      await onSunshineLogin('', '')
     } catch (err) {
       sunError = String(err)
     } finally {
@@ -225,10 +237,16 @@
         {/if}
       </div>
       {#if hostInfo.sunshineInstalled || hostInfo.sunshineRunning}
+        {#if hostInfo.sunshineLoginError}
+          <div class="rc-login-saved">
+            <span class="form-error"><Icon name="alert" size={14} /> {t('settings.credentialError', { error: hostInfo.sunshineLoginError })}</span>
+            <button class="text-btn small" disabled={sunBusy} onclick={removeSunshine}>{t('common.remove')}</button>
+          </div>
+        {/if}
         {#if hostInfo.sunshineLogin}
           <div class="rc-login-saved">
             <span class="muted small"><Icon name="check" size={13} stroke={3} /> {t('settings.loginSaved')}</span>
-            <button class="text-btn small" onclick={() => onSunshineLogin('', '')}>{t('common.remove')}</button>
+            <button class="text-btn small" disabled={sunBusy} onclick={removeSunshine}>{t('common.remove')}</button>
           </div>
         {:else}
           <form class="rc-login" onsubmit={saveSunshine}>
@@ -241,9 +259,9 @@
               <input placeholder={t('settings.password')} type="password" bind:value={sunPass} autocomplete="off" />
               <button class="btn secondary" disabled={sunBusy || !sunUser.trim() || !sunPass}>{sunBusy ? t('common.checking') : t('common.save')}</button>
             </div>
-            {#if sunError}<p class="form-error"><Icon name="alert" size={14} /> {sunError}</p>{/if}
           </form>
         {/if}
+        {#if sunError}<p class="form-error"><Icon name="alert" size={14} /> {sunError}</p>{/if}
       {/if}
     </section>
 
@@ -286,6 +304,14 @@
         </button>
         <button class="btn secondary" onclick={onChangeDir}>{t('settings.change')}</button>
       </div>
+      <label class="switch-row">
+        <span class="switch-text">
+          <span>{t('settings.askBeforeReceiving')}</span>
+          <span class="muted small">{t('settings.askBeforeReceivingText')}</span>
+        </span>
+        <input type="checkbox" class="switch" role="switch" checked={receiveSettings.askBeforeAccepting}
+          onchange={(e) => onAskBeforeReceiving(e.currentTarget.checked)} />
+      </label>
     </section>
 
     <section class="setting">

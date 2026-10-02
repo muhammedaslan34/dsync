@@ -63,16 +63,44 @@ phone*, and scan the QR code with the app. See [`mobile/README.md`](mobile/READM
 dsync checks GitHub for a new release shortly after it starts and twice a day; an
 **Update** badge appears when there is one. *Settings → Updates* installs it: the Windows
 setup runs (Windows asks for permission), the Arch package is installed with a password
-window, and a `install.sh` install is replaced in place. Downloads are checked against the
-release's `SHA256SUMS` before anything is installed.
+window, and a `install.sh` install is replaced in place. Before anything is downloaded or
+installed, dsync verifies the release's `SHA256SUMS.sig` with the Ed25519 public key pinned
+into the app. It then checks the downloaded file against the authenticated `SHA256SUMS`.
 
 ## Packaging
 
 `./scripts/package.sh` runs the tests, builds everything, and writes the three installers
-plus `SHA256SUMS` to `dist/release`. The version comes from `info.productVersion` in
+plus `SHA256SUMS` and `SHA256SUMS.sig` to `dist/release`. The version comes from `info.productVersion` in
 `wails.json`. It needs the build tools below, `makepkg` for the Arch package, and Docker:
 the Windows installer is made with NSIS, run from a small Debian image
 (`packaging/nsis`) that is built the first time.
+
+Release maintainers must create and store an Ed25519 update key outside the repository:
+
+```sh
+openssl genpkey -algorithm Ed25519 -out dsync-update-key.pem
+openssl pkey -in dsync-update-key.pem -pubout -outform DER | base64 | tr -d '\n'
+```
+
+Set the printed value as `DSYNC_UPDATE_PUBLIC_KEY`, and set
+`DSYNC_UPDATE_PRIVATE_KEY_FILE` to the PEM path when running `scripts/package.sh`. The
+script checks that the two keys match, embeds only the public key, and uses the private key
+only to produce a standard 64-byte detached Ed25519 signature over the exact
+`SHA256SUMS` bytes:
+
+```sh
+export DSYNC_UPDATE_PUBLIC_KEY='the value printed above'
+DSYNC_UPDATE_PRIVATE_KEY_FILE=/secure/path/dsync-update-key.pem ./scripts/package.sh
+```
+
+Keep the private key out of the repository and backed up. For
+`.github/workflows/release.yml`, configure the same public value as the
+`DSYNC_UPDATE_PUBLIC_KEY` repository secret. Create and protect the `release-signing`
+GitHub environment, then store the complete PEM contents in its
+`DSYNC_UPDATE_PRIVATE_KEY_PEM` secret. The environment should require maintainer approval
+before the publish job can read the private key. Builds with no embedded public key refuse
+all automatic updates. Key rotation must be shipped in an update signed by the previously
+trusted key.
 
 ## Build
 
@@ -181,12 +209,17 @@ winget install LizardByte.Sunshine                        # Windows
 
 You can also install them from dsync: *Settings → Remote control → Install*, and the
 Windows installer offers both as options. Open Sunshine once after installing it to set its
-username and password. dsync then does
-the rest: it starts Sunshine on the other computer if it isn't running, pairs Moonlight with
-it the first time (sending the PIN over dsync's encrypted connection), and opens the stream.
-If you save the Sunshine login in dsync's Settings on the controlled computer, that first
-pairing needs nobody there; otherwise dsync shows the PIN on that computer to type into
-Sunshine. The login is stored in dsync's settings file, readable only by your user.
+username and password. On the computer being controlled, explicitly allow that paired device
+to use remote control with the shield button in its conversation header. This permission is
+separate from text and file sharing and is off by default. dsync then starts Sunshine, pairs
+Moonlight the first time, and opens the stream. If you save the Sunshine login in dsync's
+Settings on the controlled computer, dsync asks there before submitting the pairing PIN;
+otherwise it shows the PIN there to enter into Sunshine manually. The Sunshine password is
+stored in the operating system credential store (Keychain, Credential Manager, or Secret
+Service), never in `config.json`. On a headless Linux session without Secret Service,
+dsync leaves automatic PIN entry disabled and continues to use the manual PIN flow. During
+the one-time upgrade from an older plaintext setting, a credential-store failure stops the
+upgrade and leaves the old file untouched so the only saved password is not silently lost.
 
 Before it starts, the control window lets you pick **which screen** to control (the other
 computer's monitors, when it has several), the **size** (smaller sizes make everything look
@@ -214,7 +247,7 @@ cat notes.txt | dsync text        # send text from stdin
 dsync send --to MyPC a.zip b.iso  # send files with a progress bar
 dsync send --to MyPC ~/Photos     # send a folder (run again to resume)
 dsync text --addr 100.64.0.2 "hi" # skip discovery
-dsync pair --to MyPC              # pair (confirm the code on both screens)
+dsync pair --to ID_PREFIX         # pair an untrusted device listed by `dsync devices`
 dsync control --to MyPC           # control MyPC's desktop with Moonlight
 ```
 
@@ -226,7 +259,9 @@ Settings and message history live in `~/.config/dsync/` (Linux) or `%AppData%\ds
 Devices must be paired before they can send each other anything. Pick a device and click
 **Pair**: both computers show the same 6-digit code, and you accept on the other one if
 the codes match. (Headless machines running `dsync serve` answer by typing `y`; from the
-command line, use `dsync pair --to NAME`.)
+command line, use `dsync devices`, then `dsync pair --to ID_PREFIX`.) Before pairing,
+LAN discovery uses the generic name "dsync device" instead of broadcasting your chosen
+computer name; trusted devices continue to appear under their saved names.
 
 - Every connection is TLS 1.3. Each device creates its own key on first run
   (`identity.pem` in the settings folder) and pairing pins the other device's key, so

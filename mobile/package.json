@@ -39,6 +39,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test:crypto": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/crypto.test.mjs",
+    "test:filename": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/filename.test.mjs",
+    "test:network": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/network.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "private": true

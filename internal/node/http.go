@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"dsync/internal/config"
+	"dsync/internal/discovery"
 	"dsync/internal/identity"
 	"dsync/internal/proto"
 )
@@ -32,11 +33,23 @@ func (n *Node) handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/file/offset", n.paired(n.handleFileOffset))
 	mux.HandleFunc("POST /api/v1/folder/end", n.paired(n.handleFolderEnd))
 	mux.HandleFunc("POST /api/v1/clipboard", n.paired(n.handleClipboard))
-	mux.HandleFunc("POST /api/v1/control/status", n.paired(n.handleControlStatus))
-	mux.HandleFunc("POST /api/v1/control/start-sunshine", n.paired(n.handleStartSunshine))
-	mux.HandleFunc("POST /api/v1/control/pin", n.paired(n.handleControlPIN))
-	mux.HandleFunc("POST /api/v1/control/configure", n.paired(n.handleControlConfigure))
+	mux.HandleFunc("POST /api/v1/control/status", n.controlAllowed(n.handleControlStatus))
+	mux.HandleFunc("POST /api/v1/control/start-sunshine", n.controlAllowed(n.handleStartSunshine))
+	mux.HandleFunc("POST /api/v1/control/pin", n.controlAllowed(n.handleControlPIN))
+	mux.HandleFunc("POST /api/v1/control/configure", n.controlAllowed(n.handleControlConfigure))
 	return mux
+}
+
+// controlAllowed requires both pairing and the separate remote-control
+// permission granted locally for that peer.
+func (n *Node) controlAllowed(h pairedHandler) http.HandlerFunc {
+	return n.paired(func(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
+		if !from.CanControl {
+			http.Error(w, "remote control is not allowed for this device", http.StatusForbidden)
+			return
+		}
+		h(w, r, from)
+	})
 }
 
 // callerFingerprint returns the key fingerprint of the connecting device.
@@ -66,8 +79,16 @@ func (n *Node) paired(h pairedHandler) http.HandlerFunc {
 }
 
 func (n *Node) handleInfo(w http.ResponseWriter, r *http.Request) {
+	device := n.Self()
+	fp := callerFingerprint(r)
+	n.mu.Lock()
+	_, trusted := n.cfg.TrustedByFingerprint(fp)
+	n.mu.Unlock()
+	if fp == "" || !trusted {
+		device = discovery.PublicDevice(device)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(n.Self())
+	json.NewEncoder(w).Encode(device)
 }
 
 func (n *Node) handleText(w http.ResponseWriter, r *http.Request, from config.TrustedPeer) {
