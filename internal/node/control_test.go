@@ -324,6 +324,28 @@ func TestControlRoutesRequireSeparatePermission(t *testing.T) {
 	}
 }
 
+func TestControlPermissionSaveFailureDoesNotGrantAccess(t *testing.T) {
+	a, b := newTestNode(t, "Laptop"), newTestNode(t, "Gaming-PC")
+	pair(a, b, b.addr)
+	// A directory at the config destination makes the atomic rename fail,
+	// including when tests run with privileges that bypass file modes.
+	configPath := filepath.Join(b.cfg.Dir(), "config.json")
+	if err := os.Rename(configPath, configPath+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(configPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SetControlPermission(a.cfg.ID, true); err == nil {
+		t.Fatal("grant unexpectedly succeeded despite config save failure")
+	}
+	target, _ := a.trusted(b.cfg.ID)
+	var status *client.StatusError
+	if _, err := a.cl.ControlStatus(t.Context(), b.addr, target.Fingerprint); !errors.As(err, &status) || status.Code != http.StatusForbidden {
+		t.Fatalf("control access after failed grant: %v, want 403", err)
+	}
+}
+
 func TestControlPairsAfterLocalConsentAndStreams(t *testing.T) {
 	f := newControlFakes(t, true, true)
 	sunshineUp(t)
@@ -406,6 +428,108 @@ func TestAutomaticControlPINCanBeDeclined(t *testing.T) {
 	case pin := <-f.pinSeen:
 		t.Fatalf("Sunshine received declined PIN %q", pin)
 	default:
+	}
+}
+
+func TestStartControlReportsDeclinedPIN(t *testing.T) {
+	f := newControlFakes(t, true, true)
+	sunshineUp(t)
+	a, b, _, _ := controlPairWithConsent(t, false)
+	b.cfg.SunshineWeb = f.web.URL
+	if err := b.SetSunshineLogin(t.Context(), "admin", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan ControlState, 1)
+	a.emit = func(event string, data any) {
+		if event == EventControl {
+			st := data.(ControlState)
+			if st.Step == "done" || st.Step == "error" || st.Step == "canceled" {
+				finished <- st
+			}
+		}
+	}
+	b.emit = func(event string, data any) {
+		if event == EventControlPIN {
+			if req := data.(ControlPIN); req.Automatic {
+				b.AnswerControlPIN(req.ID, false)
+			}
+		}
+	}
+	t.Cleanup(func() { a.CancelControl(b.cfg.ID) })
+	if err := a.StartControl(t.Context(), b.cfg.ID, ControlOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case st := <-finished:
+		if st.Step != "error" || st.Code != "pair-declined" || !strings.Contains(st.Message, "declined") {
+			t.Fatalf("declined pairing ended with %+v", st)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("StartControl kept waiting after the PIN was declined")
+	}
+	if strings.Contains(f.calls(), "stream ") {
+		t.Fatal("started streaming after the PIN was declined")
+	}
+	select {
+	case pin := <-f.pinSeen:
+		t.Fatalf("Sunshine received declined PIN %q", pin)
+	default:
+	}
+}
+
+func TestStartControlReportsPINRequestErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+	}{
+		{http.StatusRequestTimeout, "pair-consent-timeout"},
+		{http.StatusConflict, "pair-pending"},
+		{http.StatusTooManyRequests, "pair-busy"},
+		{http.StatusBadGateway, "pair-request"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			f := newControlFakes(t, true, true)
+			sunshineUp(t)
+			finished := make(chan ControlState, 1)
+			a := newTestNodeWith(t, "Laptop", func(event string, data any) {
+				if event == EventControl {
+					st := data.(ControlState)
+					if st.Step == "done" || st.Step == "error" || st.Step == "canceled" {
+						finished <- st
+					}
+				}
+			})
+			b := newTestNode(t, "Gaming-PC")
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/control/status":
+					json.NewEncoder(w).Encode(proto.ControlStatus{SunshineInstalled: true, SunshineRunning: true, AutoPIN: true})
+				case "/api/v1/control/pin":
+					http.Error(w, "PIN submission rejected", tc.status)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			server.TLS = b.tlsConfig()
+			server.StartTLS()
+			t.Cleanup(server.Close)
+			pair(a, b, strings.TrimPrefix(server.URL, "https://"))
+			t.Cleanup(func() { a.CancelControl(b.cfg.ID) })
+			if err := a.StartControl(t.Context(), b.cfg.ID, ControlOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case st := <-finished:
+				if st.Step != "error" || st.Code != tc.code || !strings.Contains(st.Detail, "PIN submission rejected") {
+					t.Fatalf("PIN failure ended with %+v", st)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("StartControl kept waiting after the PIN request failed")
+			}
+			if strings.Contains(f.calls(), "stream ") {
+				t.Fatal("started streaming after the PIN request failed")
+			}
+		})
 	}
 }
 

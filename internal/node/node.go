@@ -330,9 +330,14 @@ func (n *Node) SetControlPermission(peerID string, allow bool) error {
 		return fmt.Errorf("device %s is not paired", peerID)
 	}
 	t.CanControl = allow
-	err := n.cfg.Trust(t)
+	updated := *n.cfg
+	updated.Trusted = slices.Clone(n.cfg.Trusted)
+	err := updated.Trust(t)
 	if err == nil {
-		err = n.cfg.Save()
+		err = updated.Save()
+	}
+	if err == nil {
+		n.cfg.Trusted = updated.Trusted
 	}
 	n.mu.Unlock()
 	if err == nil {

@@ -93,3 +93,46 @@ func TestServePrompterRemovesClosedPromptBeforeNextAnswer(t *testing.T) {
 		t.Fatal("next prompt was not answered")
 	}
 }
+
+func TestServePrompterAnswerCanClosePrompt(t *testing.T) {
+	for _, mode := range []string{"answer", "stdin closed", "ask after stdin closed"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			prompts := newServePrompter(io.Discard)
+			lines := make(chan string)
+			go prompts.run(ctx, lines)
+			answered := make(chan bool, 1)
+			prompt := servePrompt{kind: promptIncoming, id: "file", text: "file? ", answer: func(ok bool) {
+				prompts.close(promptIncoming, "file")
+				answered <- ok
+			}}
+			if mode == "ask after stdin closed" {
+				closed := make(chan struct{})
+				prompts.ask(servePrompt{kind: promptPair, id: "sentinel", answer: func(bool) { close(closed) }})
+				close(lines)
+				select {
+				case <-closed:
+				case <-time.After(time.Second):
+					t.Fatal("stdin closure was not handled")
+				}
+				go func() { prompts.ask(prompt) }()
+			} else {
+				prompts.ask(prompt)
+				if mode == "answer" {
+					lines <- "y"
+				} else {
+					close(lines)
+				}
+			}
+			select {
+			case got := <-answered:
+				if got != (mode == "answer") {
+					t.Fatalf("answer = %v", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("answer callback deadlocked while closing its prompt")
+			}
+		})
+	}
+}

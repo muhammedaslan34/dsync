@@ -313,18 +313,56 @@ func TestReceiveFileCapsAccumulatedPeerParts(t *testing.T) {
 	}
 }
 
-func TestReceiveFileRejectsTransferLargerThanPeerQuota(t *testing.T) {
+func TestReceiveFileAllowsTransferLargerThanPeerQuota(t *testing.T) {
 	n := newTestNode(t, "receiver")
 	n.freeSpace = func(string) (int64, error) { return maxPeerPartialBytes + diskReserve + 1, nil }
 	tid := strings.Repeat("fa", 16)
 	w := httptest.NewRecorder()
 	n.receiveFile(w, directFileRequest(maxPeerPartialBytes+1, tid, strings.NewReader("x")), config.TrustedPeer{ID: "peer", Name: "sender"})
-	if w.Code != http.StatusInsufficientStorage {
-		t.Fatalf("status %d, want 507; body %q", w.Code, w.Body.String())
+	// The short body reaches byte-count validation after quota admission.
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "received byte count does not match declared size") {
+		t.Fatalf("large active transfer did not reach byte-count validation: %d, %s", w.Code, w.Body.String())
 	}
-	if _, err := os.Stat(n.peerPartPath("peer", tid)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("oversized transfer created a part: %v", err)
+	if history := n.History(); len(history) != 1 || history[0].File.Size != (1<<30)+1 {
+		t.Fatalf("large transfer was not admitted: %+v", history)
 	}
+}
+
+func TestPeerPartQuotaCountsAbandonedBytesOnDisk(t *testing.T) {
+	n := newTestNode(t, "receiver")
+	n.freeSpace = func(string) (int64, error) { return 8 << 30, nil }
+	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := n.peerPartPath("peer", strings.Repeat("ad", 16))
+	if err := os.WriteFile(abandoned, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePartMeta(abandoned, 2<<30); err != nil {
+		t.Fatal(err)
+	}
+	active := n.peerPartPath("peer", strings.Repeat("ac", 16))
+	release, err := n.reservePeerPart("peer", active, 2<<30, 0)
+	if err != nil {
+		t.Fatalf("one abandoned byte blocked large active transfer: %v", err)
+	}
+	release()
+	// Sparse files exercise the actual-byte limit without a large fixture.
+	if err := os.Truncate(abandoned, (1<<30)+1); err != nil {
+		t.Fatal(err)
+	}
+	if release, err = n.reservePeerPart("peer", active, 2<<30, 0); !errors.Is(err, errPartQuota) {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("abandoned bytes above limit admitted transfer: %v", err)
+	}
+	// Resuming the oversized part makes it active, allowing it to finish.
+	release, err = n.reservePeerPart("peer", abandoned, 2<<30, (1<<30)+1)
+	if err != nil {
+		t.Fatalf("could not resume oversized abandoned part: %v", err)
+	}
+	release()
 }
 
 func TestPeerPartDeclaredSizeCannotGrow(t *testing.T) {
@@ -362,9 +400,9 @@ func TestPeerPartDeclaredSizeCannotGrow(t *testing.T) {
 	}
 }
 
-func TestPeerPartQuotaReservationsAreAtomic(t *testing.T) {
+func TestDiskSpaceReservationsAreAtomicForSamePeer(t *testing.T) {
 	n := newTestNode(t, "receiver")
-	n.freeSpace = func(string) (int64, error) { return 8 << 30, nil }
+	n.freeSpace = func(string) (int64, error) { return diskReserve + (1 << 30), nil }
 	if err := os.MkdirAll(n.ReceiveDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +415,7 @@ func TestPeerPartQuotaReservationsAreAtomic(t *testing.T) {
 		go func() {
 			<-start
 			part := n.peerPartPath("peer", fmt.Sprintf("%032x", i+100))
-			release, err := n.reservePeerPart("peer", part, maxPeerPartialBytes/2, 0)
+			release, err := n.reservePeerPart("peer", part, 1<<29, 0)
 			if release != nil {
 				releases <- release
 			}
@@ -398,7 +436,7 @@ func TestPeerPartQuotaReservationsAreAtomic(t *testing.T) {
 		release()
 	}
 	if accepted != 2 {
-		t.Fatalf("accepted %d half-quota transfers, want exactly 2", accepted)
+		t.Fatalf("accepted %d 512 MiB transfers with 1 GiB available, want exactly 2", accepted)
 	}
 }
 

@@ -753,8 +753,8 @@ func (n *Node) hasReceiveSpace(dir string, needed int64) (free int64, ok bool) {
 }
 
 // reservePeerPart binds a part to its original declared size and atomically
-// reserves both the peer quota and currently available disk space. The small
-// sidecar makes the binding survive a restart. Legacy parts are bound on their
+// checks abandoned partial bytes and reserves currently available disk space.
+// The small sidecar makes the binding survive a restart. Legacy parts are bound on their
 // first resumed request, preserving compatibility without allowing later size
 // inflation.
 func (n *Node) reservePeerPart(peerID, part string, declaredSize, offset int64) (func(), error) {
@@ -783,14 +783,19 @@ func (n *Node) reservePeerPart(peerID, part string, declaredSize, offset int64) 
 		path := filepath.Join(dir, entry.Name())
 		accounted[path] = true
 		files++
-		amount := int64(0)
+		// Active transfers reserve their remaining disk space below, but
+		// only abandoned parts count against the partial-byte quota.
 		if path == part {
-			amount = declaredSize
-		} else if bound, ok := readPartMeta(path); ok {
-			amount = bound.Size
-		} else if st, err := entry.Info(); err == nil {
-			amount = st.Size()
+			continue
 		}
+		if _, active := n.partReservations[path]; active {
+			continue
+		}
+		st, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		amount := st.Size()
 		if amount > maxPeerPartialBytes-bytes {
 			return nil, errPartQuota
 		}
@@ -803,18 +808,10 @@ func (n *Node) reservePeerPart(peerID, part string, declaredSize, offset int64) 
 			continue
 		}
 		files++
-		bound, ok := readPartMeta(path)
-		if !ok || bound.Size > maxPeerPartialBytes-bytes {
-			return nil, errPartQuota
-		}
-		bytes += bound.Size
+		accounted[path] = true
 	}
 	if !accounted[part] {
 		files++
-		if declaredSize > maxPeerPartialBytes-bytes {
-			return nil, errPartQuota
-		}
-		bytes += declaredSize
 	}
 	if files > maxPeerPartialFiles || bytes > maxPeerPartialBytes {
 		return nil, errPartQuota

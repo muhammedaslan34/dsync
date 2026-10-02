@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"dsync/internal/client"
 	"dsync/internal/config"
 	"dsync/internal/control"
 	"dsync/internal/identity"
@@ -45,7 +46,8 @@ type ControlState struct {
 	// Code tells apart messages of the same step, so the window can show
 	// them in its own language: pair-auto, pair-manual and pair-retry while
 	// pairing; no-moonlight, no-sunshine, sunshine-start, sunshine-blocked,
-	// ask, configure, pair-unfinished and pair-timeout for errors.
+	// ask, configure, pair-unfinished, pair-timeout, pair-declined,
+	// pair-consent-timeout, pair-pending, pair-busy and pair-request for errors.
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"` // in English
 	Detail  string `json:"detail,omitempty"`  // the underlying error, for codes that include one
@@ -629,6 +631,8 @@ func (n *Node) adjustPointerWhile(step int, done <-chan struct{}) {
 // PIN over dsync so nobody has to type it on the other computer (if it has
 // a Sunshine login saved), or showing it there otherwise.
 func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Peer, host, addr, fp string, auto bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	pin := randomPIN()
 	code, msg := "pair-auto", "Setting up remote control with "+peer.Name+" (only needed once)…"
 	if !auto {
@@ -650,15 +654,18 @@ func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Pee
 		case <-exited:
 		default:
 			cmd.Process.Kill() // close Moonlight's pairing window
+			<-exited           // reap it before reporting the result
 		}
 	}()
 
+	type pinResult struct {
+		res proto.ControlPINResult
+		err error
+	}
+	results := make(chan pinResult, 1)
 	go func() {
 		res, err := n.cl.ControlPIN(ctx, addr, fp, proto.ControlPINRequest{PIN: pin, FromName: n.Self().Name})
-		if err == nil && !res.Auto && auto {
-			n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Code: "pair-retry", Detail: res.Error, PIN: pin,
-				Message: "Sunshine on " + peer.Name + " didn't take the PIN automatically (" + res.Error + "). Enter it there by hand."})
-		}
+		results <- pinResult{res: res, err: err}
 	}()
 
 	deadline := time.Now().Add(pairWait)
@@ -666,6 +673,29 @@ func (n *Node) pairMoonlight(ctx context.Context, ml control.Moonlight, peer Pee
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case result := <-results:
+			results = nil // only one PIN response is expected
+			if result.err != nil {
+				code, msg := "pair-request", "could not submit the pairing PIN to "+peer.Name
+				var status *client.StatusError
+				if errors.As(result.err, &status) {
+					switch status.Code {
+					case http.StatusForbidden:
+						code, msg = "pair-declined", "remote control request declined on "+peer.Name
+					case http.StatusRequestTimeout:
+						code, msg = "pair-consent-timeout", "remote control approval timed out on "+peer.Name
+					case http.StatusConflict:
+						code, msg = "pair-pending", "a remote control request is already waiting on "+peer.Name
+					case http.StatusTooManyRequests:
+						code, msg = "pair-busy", "too many remote control requests are waiting on "+peer.Name
+					}
+				}
+				return &controlError{msg: msg, code: code, detail: result.err.Error(), err: result.err}
+			}
+			if !result.res.Auto && auto {
+				n.emit(EventControl, ControlState{PeerID: peer.ID, Step: "pairing", Code: "pair-retry", Detail: result.res.Error, PIN: pin,
+					Message: "Sunshine on " + peer.Name + " didn't take the PIN automatically (" + result.res.Error + "). Enter it there by hand."})
+			}
 		case <-exited:
 		case <-time.After(2 * time.Second):
 		}

@@ -127,11 +127,11 @@ func (p *servePrompter) run(ctx context.Context, lines <-chan string) {
 				lines = nil
 				inputClosed = true
 				if active != nil {
-					active.answer(false)
+					go active.answer(false)
 					active = nil
 				}
 				for _, prompt := range queued {
-					prompt.answer(false)
+					go prompt.answer(false)
 				}
 				queued = nil
 				fmt.Fprintln(p.out, "\nstdin closed; pending interactive requests were denied.")
@@ -142,7 +142,9 @@ func (p *servePrompter) run(ctx context.Context, lines <-chan string) {
 			}
 			prompt := active
 			active = nil
-			prompt.answer(strings.EqualFold(strings.TrimSpace(line), "y"))
+			// Answers can synchronously emit node events that dispatch back
+			// into this loop. Keep the loop available to handle those events.
+			go prompt.answer(strings.EqualFold(strings.TrimSpace(line), "y"))
 			showNext()
 		case event := <-p.events:
 			switch {
@@ -150,7 +152,7 @@ func (p *servePrompter) run(ctx context.Context, lines <-chan string) {
 				prompt := *event.add
 				if inputClosed {
 					fmt.Fprintf(p.out, "\nCannot ask for %s approval because stdin is closed; denying the request.\n", prompt.kind)
-					prompt.answer(false)
+					go prompt.answer(false)
 				} else {
 					duplicate := active != nil && active.kind == prompt.kind && active.id == prompt.id
 					for _, existing := range queued {
